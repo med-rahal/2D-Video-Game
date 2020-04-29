@@ -1,52 +1,48 @@
-/**
-* @file main.c
-* @brief Testing Program.
-* @author C Team
-* @version 0.1
-* @date Mai 05, 2019
-*
-* Testing program for background scrollilng
-*
-*/
+#include<stdio.h>
+#include<stdlib.h>
+#include<SDL/SDL.h>
+#include <SDL/SDL_image.h>
+#include "animationennemi.h"
 
-#include "menu.h"
-
-
-int main (void)
+int main(int argc,char** argv)
 {
-    int continuee=1,i;
-    SDL_Surface *ecran =NULL;
-    Mix_Music *musique;
-    Mix_Chunk *son;
-    SDL_Init(SDL_INIT_VIDEO);
-    ecran = SDL_SetVideoMode(1366, 678,32, SDL_HWSURFACE | SDL_DOUBLEBUF);
-    SDL_WM_SetCaption("Jeux video", NULL);
-    
+SDL_Init(SDL_INIT_EVERYTHING);
+SDL_Surface*screen;
+SDL_Surface*image;
 
-if (ecran==NULL)
+screen=SDL_SetVideoMode(960,600,32,SDL_SWSURFACE);
+int done=1;
+SDL_Rect rect;
+int frame=0;
+image=IMG_Load("999.png");
+SDL_Rect rects[8];
+setrects(rects);
+SDL_SetColorKey(image, SDL_SRCCOLORKEY, SDL_MapRGB(screen->format, 0x00, 0xff, 0xff));
+while(done)
 {
-printf("error: %s ",SDL_GetError());
-exit(EXIT_FAILURE);
+
+                SDL_Event event;
+                while(SDL_PollEvent(&event)) {
+                        switch(event.type) {
+                                case SDL_QUIT:
+                                        done = 0;
+                                        break;
+						}
+					}
+SDL_FillRect(screen,&screen->clip_rect,0x00);
+SDL_FillRect(screen,&rect,0x00);
+SDL_Rect rect;
+rect.x=150;
+rect.y=250;
+SDL_BlitSurface(image,&rects[frame],screen,&rect);
+SDL_Flip(screen);
+frame++;
+if(frame==7){
+frame=0;
 }
-if(Mix_OpenAudio(44100,MIX_DEFAULT_FORMAT,MIX_DEFAULT_CHANNELS,1024)==-1)
-  {printf("%s",Mix_GetError()); }
-          	
-	   musique=Mix_LoadMUS("music2.mp3");
-           Mix_PlayMusic(musique,-1);
-
-	
-while (continuee)
-{
-menu(ecran,musique,&i);
 }
-
-Mix_FreeMusic(musique);
-Mix_CloseAudio();
-SDL_FreeSurface(ecran);
+SDL_FreeSurface(image);
 SDL_Quit();
-return EXIT_SUCCESS;
+
+return 0;
 }
-
-
-
-
