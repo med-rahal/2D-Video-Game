@@ -74,25 +74,10 @@ i=Joueur.vie.nbr;
        {i--;}SDL_Delay(15); 
 
 
-
-
 if (direction==3)
           
  if  (collision_Parfaite(bg.calque,Joueur.imageActuel,Joueur.position,bg.camera.x,3)==1)
        {i--;}SDL_Delay(15); 
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 if(event.key.keysym.sym==SDLK_r){i--;} 
 
