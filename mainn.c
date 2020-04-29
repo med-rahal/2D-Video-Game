@@ -2,7 +2,7 @@
 #include<stdlib.h>
 #include<SDL/SDL.h>
 #include <SDL/SDL_image.h>
-#include "animationperso.h"
+#include "personnage.h"
 
 int main(int argc,char** argv)
 {
