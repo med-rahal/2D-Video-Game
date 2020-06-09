@@ -2,21 +2,21 @@
 #include<stdlib.h>
 #include<SDL/SDL.h>
 #include <SDL/SDL_image.h>
-#include "animation.h"
+#include "animation1.h"
 
 
 int main()
 {
 SDL_Init(SDL_INIT_EVERYTHING);
-SDL_Surface *screen;
-ennemi e;
+SDL_Surface*screen;
+charac c;
 int continuer=1;
 int frame=0;
 SDL_Rect rects[4];
 
 while(continuer)
 {
-animationennemie(e,frame,screen);
+animation1(c,frame,screen);
 }					
 SDL_Quit();
 return 0;
