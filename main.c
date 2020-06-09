@@ -1,50 +1,23 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <SDL/SDL.h>
+#include<stdio.h>
+#include<stdlib.h>
+#include<SDL/SDL.h>
 #include <SDL/SDL_image.h>
-#include <SDL/SDL_mixer.h>
-#include <SDL/SDL_ttf.h>
-#include<SDL/SDL_audio.h>
-#include "perso.h"
+#include "animation.h"
 
-void main()
+
+int main()
 {
-int cont=1;
-SDL_Surface *menu=NULL;
-SDL_Surface *ecran=NULL;
+SDL_Init(SDL_INIT_EVERYTHING);
+SDL_Surface *screen;
+ennemi e;
+int continuer=1;
+int frame=0;
+SDL_Rect rects[4];
 
-perso p; SDL_Event event;
-SDL_Event even;
-SDL_Rect positionmenu;
-
-menu=IMG_Load("background.png");
-
-positionmenu.x=0;
-positionmenu.y=0;
-
-SDL_Init(SDL_INIT_AUDIO|SDL_INIT_VIDEO);
-ecran=SDL_SetVideoMode(1600,600, 32,SDL_HWSURFACE|SDL_DOUBLEBUF);
-if (ecran==NULL)
-printf ("Erreur");
-
-
-
- init_perso(&p);
-while (cont)
+while(continuer)
 {
-
-
-SDL_BlitSurface(menu,NULL,ecran,&positionmenu);
-
-
-
-
- affiche_perso(&p,ecran);
- deplacerclaviersouris(event,&p,ecran);
-
-SDL_Flip (ecran);
-
-
-}
+animationennemie(e,frame,screen);
+}					
 SDL_Quit();
+return 0;
 }
