@@ -1,0 +1,3155 @@
+
+#include <stdio.h>
+#include <stdlib.h>
+#include "SDL/SDL_image.h"
+#include "SDL/SDL.h"
+#include "SDL/SDL_mixer.h"
+#include "SDL/SDL_ttf.h"
+#include "core.h"
+#include <time.h>
+#include <string.h>
+#include <dirent.h>
+
+/**
+* function initializes and loads all the images needed into memory to show the pick screen
+* picker * p the structure that will be returned if the initialization done correctly
+*initializes and loads the images to show the screen
+*/
+int initPickScreen(picker *p){
+  p->backPicker = IMG_Load("Resources/picker.png");
+  p->backbut = IMG_Load("Resources/back.png");
+  p->backbut2 = IMG_Load("Resources/back2.png");
+  if((p->backPicker == NULL) || (p->backbut == NULL) || (p->backbut2 == NULL)){
+    printf("couldn't load images\n");
+    return 0;
+  }else{
+    p->backPos.x = 0; p->backPos.y = 0;
+    p->backPos.h = p->backPicker->h; p->backPos.w = p->backPicker->w;
+    p->backbutPos.x = 10; p->backbutPos.y = 455;
+    p->backbutPos.h = p->backbut->h ; p->backbutPos.w = p->backbut->w;
+ }
+return 1;//return int that says it the initialization done correctly (1 for done 0 for not done)//
+}  
+/**
+*function Shows the pick screen and gets the event from user
+*function will return a character 'x' if user clicked on X on the screen or 'o' if clicked on O or 'n' character if user clicked back button or 'f' by default
+*deciding what background (theme) should be applied when openning this section
+*it will  return a picker structure that contains a  filled with what did the user choose
+*/
+
+
+picker getPick (SDL_Surface * screen, SDL_Event event, picker p, soundFX sfx){
+  //deciding what background (theme) should be applied when openning this section.
+  FILE* f = fopen("backup/general.toe", "rb");
+  char themePath[256];
+  fread(&themePath, sizeof(char)*256,1, f);
+  fclose(f);
+  SDL_Surface * back = IMG_Load(themePath);
+  SDL_Rect backPos;
+  backPos.x = 0; backPos.y = 0;
+  backPos.h = back->h; backPos.w = back->w;
+  SDL_BlitSurface(back, NULL, screen, &backPos);
+
+   int blitCheck = 0; // this variable for checking when to blit
+  //show//
+  if(blitCheck == 0){
+    SDL_BlitSurface(back, NULL, screen, &backPos);
+  SDL_BlitSurface(p.backPicker, NULL, screen, &p.backPos);
+  SDL_BlitSurface(p.backbut, NULL, screen, &p.backbutPos);
+  SDL_Flip(screen);
+  }
+  if(event.type == SDL_MOUSEMOTION){
+    if(((event.motion.x <= (p.backbutPos.x + p.backbut->w)) && (event.motion.x >= p.backbutPos.x)) && ((event.motion.y >= p.backbutPos.y) && (event.motion.y <= (p.backbutPos.y + p.backbut->h)))) {
+    p.backbutPos.h = p.backbut2->h;
+    p.backbutPos.w = p.backbut2->w;
+    SDL_BlitSurface(back, NULL, screen, &backPos);
+    SDL_BlitSurface(p.backPicker, NULL, screen, &p.backPos);
+    SDL_BlitSurface(p.backbut2 ,NULL,screen,&p.backbutPos);
+    if(sfx.soundMuted == 0){
+   Mix_PlayChannel(-1, sfx.butHover, 0);
+   }
+    SDL_Flip(screen);
+    blitCheck=1;
+  }else{
+    blitCheck = 0;
+  }
+}else{
+    if(event.type == SDL_MOUSEBUTTONDOWN){
+      if(((event.button.x <= (p.backbutPos.x + p.backbut->w)) && (event.button.x >= p.backbutPos.x)) && ((event.button.y >= p.backbutPos.y) && (event.button.y <= (p.backbutPos.y + p.backbut->h)))) {
+      p.pick = 'n';
+      if(sfx.soundMuted == 0){
+     Mix_PlayChannel(-1, sfx.butClick, 0);
+     }
+      return p;
+    }else{
+      if(((event.button.x <= (64 + 147)) && (event.button.x >= 64)) && ((event.button.y >= 144) && (event.button.y <= ( 144+ 134)))) {
+        p.pick = 'x';
+        if(sfx.soundMuted == 0){
+       Mix_PlayChannel(-1, sfx.butClick, 0);
+       }
+        return p;
+      }else{
+        if(((event.button.x <= (295 + 147)) && (event.button.x >= 295)) && ((event.button.y >= 144) && (event.button.y <= (144 + 134)))) {
+           p.pick = 'o';
+           if(sfx.soundMuted == 0){
+          Mix_PlayChannel(-1, sfx.butClick, 0);
+          }
+           return p;
+        }
+      }
+    }
+    }
+  }
+p.pick = 'f';
+  return p;
+}
+/**
+*function  initializes the deffence table to 0
+*int t[3][3] returned deffence table//
+*This function must be called inside of computerBrain() to that function run properly
+*/
+void initDeffTable(int (*t)[3]){
+    int i,j;
+    for (i=0; i<=2; i++) {
+        for (j=0; j<=2; j++) {
+            t[i][j] = 0;
+        }
+    }
+}
+
+/**
+*This function do the same as the initDeffTable but is on the attack mode
+*/
+void initAttTable(int (*ta)[3]){
+    int i,j;
+    for (i=0; i<=2; i++) {
+        for (j=0; j<=2; j++) {
+            ta[i][j] = 0;
+        }
+    }
+}
+/**
+ * function computerBrain responsable for making the computer thinks when playing vs Player.
+ * char whatComputerChose the character that indicates by what the computer is currently playing with X or O.
+ * This function traverses all the possible cases in m matrix to generate what computer should set its turn.
+ */
+void computerBrain(char (*m)[3], int *xc, int *yc, int (*t)[3], int (*ta)[3], char whatComputerChose){
+    int i, test=0,j, count,k,l,istheremore2,isthere2,pass = 0;
+    int isthere2a, istheremore2a,done;
+    int xof2=-1, yof2=-1, xof22=-1, yof22=-1;
+    int xof2at =-1, yof2at =-1, xof22at =-1, yof22at =-1;
+    char hold, reverse;
+    /*
+    this if bellow is to assign reverse variable of what computer chose
+    for exemple if computer chose 'x' than 'o' will be affected in reverse.
+    This is for making this function runs in both choices (either user chooses 'x' or 'o').
+    */
+    if(whatComputerChose == 'o'){
+      reverse = 'x';
+    }else{
+      if(whatComputerChose == 'x'){
+      reverse = 'o';
+    }
+    }
+    // these for loops are to check if the computer plays first or not
+    for(i=0; i<=2; i++){
+        for(j=0; j<=2; j++) {
+            if (m[i][j] != ' ') {
+                test++;
+            }
+        }
+    }
+    initDeffTable(t);
+    initAttTable(ta);
+    if (test > 1) {
+        // Begin Algorithm defence
+        //first tour ===============
+        count = 0;
+        hold = m[0][0];
+        if (hold != ' ') {
+            //1st run===================
+            for (j=0; j<=2; j++) {
+                if (m[0][j] == reverse) {
+                    count++;
+                }
+            }
+            k=0;
+            while (k<=2) {
+                if ((m[0][k] == ' ') && (t[0][k] != 2)) {
+                    if (count == 0) {
+                        t[0][k] = count+1;
+                    }else{
+                        t[0][k] = count;
+                    }
+                }
+                k++;
+            }
+            //2nd run===================
+            count = 0;
+            for (j=0; j<=2; j++) {
+                if (m[j][j] == reverse) {
+                    count++;
+                }
+            }
+            k=0;
+            while (k<=2) {
+                if ((m[k][k] == ' ') && (t[k][k] != 2)) {
+                    if (count == 0) {
+                        t[k][k] = count+1;
+                    }else{
+                        t[k][k] = count;
+                    }
+                }
+                k++;
+            }
+            //3rd run===================
+            count = 0;
+            for (j=0; j<=2; j++) {
+                if (m[j][0] == reverse) {
+                    count++;
+                }
+            }
+            k=0;
+            while (k<=2) {
+                if ((m[k][0] == ' ') && (t[k][0] != 2)) {
+                    if (count == 0) {
+                        t[k][0] = count+1;
+                    }else{
+                        t[k][0] = count;
+                    }
+                }
+                k++;
+            }
+        }
+        //second tour ==============
+        count = 0;
+        hold = m[1][0];
+        if (hold != ' ') {
+            //1st run===================
+            for (j=0; j<=2; j++) {
+                if (m[1][j] == reverse) {
+                    count++;
+                }
+            }
+            k=0;
+            while (k<=2) {
+                if ((m[1][k] == ' ') && (t[1][k] != 2)) {
+                    if (count == 0) {
+                        t[1][k] = count+1;
+                    }else{
+                        t[1][k] = count;
+                    }
+                }
+                k++;
+            }
+        }
+        // third tour ===================
+        count = 0;
+        hold = m[2][0];
+        if (hold != ' ') {
+            //1st run===================
+            for (j=2; j>=0; j--) {
+                if (m[j][0] == reverse) {
+                    count++;
+                }
+            }
+            k=2;
+            while (k>=0) {
+                if ((m[k][0] == ' ') && (t[k][0] != 2)) {
+                    if (count == 0) {
+                        t[k][0] = count+1;
+                    }else{
+                        t[k][0] = count;
+                    }
+                }
+                k--;
+            }
+            //2nd run===================
+            count = 0;
+            l=0;
+            for (j=2; j>=0; j--) {
+                if (m[j][l] == reverse) {
+                    count++;
+                }
+                l++;
+            }
+            k=2; l=0;
+            while (k>=0) {
+                if ((m[k][l] == ' ') && (t[k][l] != 2)) {
+                    if (count == 0) {
+                        t[k][l] = count+1;
+                    }else{
+                        t[k][l] = count;
+                    }
+                }
+                k--;
+                l++;
+            }
+            //3rd run===================
+            count = 0;
+            for (j=0; j<=2; j++) {
+                if (m[2][j] == reverse) {
+                    count++;
+                }
+            }
+            k=0;
+            while (k<=2) {
+                if ((m[2][k] == ' ') && (t[2][k] != 2)) {
+                    if (count == 0) {
+                        t[2][k] = count+1;
+                    }else{
+                        t[2][k] = count;
+                    }
+                }
+                k++;
+            }
+        }
+        //fourth tour ====================
+        count = 0;
+        hold = m[2][1];
+        if (hold != ' ') {
+            //1st run===================
+            for (j=2; j>=0; j--) {
+                if (m[j][1] == reverse) {
+                    count++;
+                }
+            }
+            k=2;
+            while (k>=0) {
+                if ((m[k][1] == ' ') && (t[k][1] != 2)) {
+                    if (count == 0) {
+                        t[k][1] = count+1;
+                    }else{
+                        t[k][1] = count;
+                    }
+                }
+                k--;
+            }
+        }
+        //fifth tour ====================
+        count = 0;
+        hold = m[2][2];
+        if (hold != ' ') {
+            //1st run===================
+            for (j=2; j>=0; j--) {
+                if (m[2][j] == reverse) {
+                    count++;
+                }
+            }
+            k=2;
+            while (k>=0) {
+                if ((m[2][k] == ' ') && (t[2][k] != 2)) {
+                    if (count == 0) {
+                        t[2][k] = count+1;
+                    }else{
+                        t[2][k] = count;
+                    }
+                }
+                k--;
+            }
+            //2nd run==================
+            count = 0; l = 2;
+            for (j=2; j>=0; j--) {
+                if (m[j][l] == reverse) {
+                    count++;
+                }
+                l--;
+            }
+            k=2; l =2;
+            while (k>=0) {
+                if ((m[k][l] == ' ') && (t[k][l] != 2)) {
+                    if (count == 0) {
+                        t[k][l] =  count+1;
+                    }else{
+                        t[k][l] = count;
+                    }
+                }
+                k--;
+                l--;
+            }
+            //3rd run ====================
+            count = 0;
+            for (j=2; j>=0; j--) {
+                if (m[j][2] == reverse) {
+                    count++;
+                }
+            }
+            k=2;
+            while (k>=0) {
+                if ((m[k][2] == ' ') && (t[k][2] != 2)) {
+                    if (count == 0) {
+                        t[k][2] = count+1;
+                    }else{
+                        t[k][2] = count;
+                    }
+                }
+                k--;
+            }
+        }
+        //sixth tour ====================
+        count = 0;
+        hold = m[1][2];
+        if (hold != ' ') {
+            //1st run===================
+            for (j=2; j>=0; j--) {
+                if (m[1][j] == reverse) {
+                    count++;
+                }
+            }
+            k=2;
+            while (k>=0) {
+                if ((m[1][k] == ' ') && (t[1][k] != 2)) {
+                    if (count == 0) {
+                        t[1][k] = count+1;
+                    }else{
+                        t[1][k] = count;
+                    }
+                }
+                k--;
+            }
+        }
+        //seventh tour ====================
+        count = 0;
+        hold = m[0][2];
+        if (hold != ' ') {
+            //1st run===================
+            for (j=0; j<=2; j++) {
+                if (m[j][2] == reverse) {
+                  count++;
+                }
+            }
+            k=0;
+            while (k<=2) {
+                if ((m[k][2] == ' ') && (t[k][2] != 2)) {
+                    if (count == 0) {
+                      t[k][2] = count+1;
+                    }else{
+                      t[k][2] = count;
+                    }
+                }
+                k++;
+            }
+            //2nd run===================
+            count = 0; l = 2;
+            for (j=2; j>=0; j--) {
+                if (m[2-j][l] == reverse) {
+                    count++;
+                }
+                l--;
+            }
+            k=2; l =2;
+            while (k>=0) {
+                if ((m[2-k][l] == ' ') && (t[2-k][l] != 2)) {
+                    if (count == 0) {
+                        t[2-k][l] = count+1;
+                    }else{
+                        t[2-k][l] = count;
+                    }
+                }
+                k--;
+                l--;
+            }
+            //3rd run===================
+            count = 0;
+            for (j=2; j>=0; j--) {
+                if (m[0][j] == reverse) {
+                    count++;
+                }
+            }
+            k=2;
+            while (k>=0) {
+                if ((m[0][k] == ' ') && (t[0][k] != 2)) {
+                    if (count == 0) {
+                        t[0][k] = count+1;
+                    }else{
+                        t[0][k] = count;
+                    }
+                }
+                k--;
+            }
+        }
+        //eighth tour ====================
+        count = 0;
+        hold = m[0][1];
+        if (hold != ' ') {
+            //1st run===================
+            for (j=0; j<=2; j++) {
+                if (m[j][1] == reverse) {
+                    count++;
+                }
+            }
+            k=0;
+            while (k<=2) {
+                if ((m[k][1] == ' ') && (t[k][1] != 2)) {
+                    if (count == 0) {
+                        t[k][1] = count+1;
+                    }else{
+                        t[k][1] = count;
+                    }
+                }
+                k++;
+            }
+        }
+        // end of Algortihme defence
+        pass = 1;
+    }else{
+        do{
+            srand((unsigned) time(NULL));
+            *xc = rand() % 3;
+            *yc = rand() % 3;
+        }while(m[*xc][*yc] != ' ');
+    }
+    if (pass == 1) {
+        //check if all are ones 1 and twos and more
+
+        isthere2 = 0;
+        isthere2=0; istheremore2=0;
+        for(i=0; i<=2; i++) {
+            for(j=0; j<=2; j++) {
+                if (t[i][j] == 2) {
+                    if (isthere2 == 1) {
+                        istheremore2 = 1;
+                        xof22 = i;
+                        yof22 = j;
+                    }else{
+                        isthere2 = 1;
+                        xof2 = i;
+                        yof2 = j;
+                    }
+                }
+            }
+        }
+        //if all are ones
+        if ((isthere2 == 0) && (istheremore2 == 0)) {
+          initAttTable(ta);
+            // Begin Algorithm attack
+            //first tour ===============
+            count = 0;
+            hold = m[0][0];
+            if (hold != ' ') {
+                //1st run===================
+                for (j=0; j<=2; j++) {
+                    if (m[0][j] == whatComputerChose) {
+                        count++;
+                    }
+                }
+                k=0;
+                while (k<=2) {
+                    if ((m[0][k] == ' ') && (ta[0][k] != 2)) {
+                        if (count == 0) {
+                            ta[0][k] = count+1;
+                        }else{
+                            ta[0][k] = count;
+                        }
+                    }
+                    k++;
+                }
+                //2nd run===================
+                count = 0;
+                for (j=0; j<=2; j++) {
+                    if (m[j][j] == whatComputerChose) {
+                        count++;
+                    }
+                }
+                k=0;
+                while (k<=2) {
+                    if ((m[k][k] == ' ') && (ta[k][k] != 2)) {
+                        if (count == 0) {
+                            ta[k][k] = count+1;
+                        }else{
+                            ta[k][k] = count;
+                        }
+                    }
+                    k++;
+                }
+                //3rd run===================
+                count = 0;
+                for (j=0; j<=2; j++) {
+                    if (m[j][0] == whatComputerChose) {
+                        count++;
+                    }
+                }
+                k=0;
+                while (k<=2) {
+                    if ((m[k][0] == ' ') && (ta[k][0] != 2)) {
+                        if (count == 0) {
+                            ta[k][0] = count+1;
+                        }else{
+                            ta[k][0] = count;
+                        }
+                    }
+                    k++;
+                }
+            }
+            //second tour ==============
+            count = 0;
+            hold = m[1][0];
+            if (hold != ' ') {
+                //1st run===================
+                for (j=0; j<=2; j++) {
+                    if (m[1][j] == whatComputerChose) {
+                        count++;
+                    }
+                }
+                k=0;
+                while (k<=2) {
+                    if ((m[1][k] == ' ') && (ta[1][k] != 2)) {
+                        if (count == 0) {
+                            ta[1][k] = count+1;
+                        }else{
+                            ta[1][k] = count;
+                        }
+                    }
+                    k++;
+                }
+            }
+            // third tour ===================
+            count = 0;
+            hold = m[2][0];
+            if (hold != ' ') {
+                //1st run===================
+                for (j=2; j>=0; j--) {
+                    if (m[j][1] == whatComputerChose) {
+                        count++;
+                    }
+                }
+                k=2;
+                while (k>=0) {
+                    if ((m[k][1] == ' ') && (ta[k][1] != 2)) {
+                        if (count == 0) {
+                            ta[k][1] = count+1;
+                        }else{
+                            ta[k][1] = count;
+                        }
+                    }
+                    k--;
+                }
+                //2nd run===================
+                count = 0;
+                l=0;
+                for (j=2; j>=0; j--) {
+                    if (m[j][l] == whatComputerChose) {
+                        count++;
+                    }
+                    l++;
+                }
+                k=2; l=0;
+                while (k>=0) {
+                    if ((m[k][l] == ' ') && (ta[k][l] != 2)) {
+                        if (count == 0) {
+                            ta[k][l] = count+1;
+                        }else{
+                            ta[k][l] = count;
+                        }
+                    }
+                    k--;
+                    l++;
+                }
+                //3rd run===================
+                count = 0;
+                for (j=0; j<=2; j++) {
+                    if (m[2][j] == whatComputerChose) {
+                        count++;
+                    }
+                }
+                k=0;
+                while (k<=2) {
+                    if ((m[2][k] == ' ') && (ta[2][k] != 2)) {
+                        if (count == 0) {
+                            ta[2][k] = count+1;
+                        }else{
+                            ta[2][k] = count;
+                        }
+                    }
+                    k++;
+                }
+            }
+            //fourth tour ====================
+            count = 0;
+            hold = m[2][1];
+            if (hold != ' ') {
+                //1st run===================
+                for (j=2; j>=0; j--) {
+                    if (m[j][1] == whatComputerChose) {
+                        count++;
+                    }
+                }
+                k=2;
+                while (k>=0) {
+                    if ((m[k][1] == ' ') && (ta[k][1] != 2)) {
+                        if (count == 0) {
+                            ta[k][1] = count+1;
+                        }else{
+                            ta[k][1] = count;
+                        }
+                    }
+                    k--;
+                }
+            }
+            //fifth tour ====================
+            count = 0;
+            hold = m[2][2];
+            if (hold != ' ') {
+                //1st run===================
+                for (j=2; j>=0; j--) {
+                    if (m[2][j] == whatComputerChose) {
+                        count++;
+                    }
+                }
+                k=2;
+                while (k>=0) {
+                    if ((m[2][k] == ' ') && (ta[2][k] != 2)) {
+                        if (count == 0) {
+                            ta[2][k] = count+1;
+                        }else{
+                            ta[2][k] = count;
+                        }
+                    }
+                    k--;
+                }
+                //2nd run==================
+                count = 0; l = 2;
+                for (j=2; j>=0; j--) {
+                    if (m[j][l] == whatComputerChose) {
+                        count++;
+                    }
+                    l--;
+                }
+                k=2; l =2;
+                while (k>=0) {
+                    if ((m[k][l] == ' ') && (ta[k][l] != 2)) {
+                        if (count == 0) {
+                            ta[k][l] =  count+1;
+                        }else{
+                            ta[k][l] = count;
+                        }
+                    }
+                    k--;
+                    l--;
+                }
+                //3rd run ====================
+                count = 0;
+                for (j=2; j>=0; j--) {
+                    if (m[j][2] == whatComputerChose) {
+                        count++;
+                    }
+                }
+                k=2;
+                while (k>=0) {
+                    if ((m[k][2] == ' ') && (ta[k][2] != 2)) {
+                        if (count == 0) {
+                            ta[k][2] = count+1;
+                        }else{
+                            ta[k][2] = count;
+                        }
+                    }
+                    k--;
+                }
+            }
+            //sixth tour ====================
+            count = 0;
+            hold = m[1][2];
+            if (hold != ' ') {
+                //1st run===================
+                for (j=2; j>=0; j--) {
+                    if (m[1][j] == whatComputerChose) {
+                        count++;
+                    }
+                }
+                k=2;
+                while (k>=0) {
+                    if ((m[1][k] == ' ') && (ta[1][k] != 2)) {
+                        if (count == 0) {
+                            ta[1][k] = count+1;
+                        }else{
+                            ta[1][k] = count;
+                        }
+                    }
+                    k--;
+                }
+            }
+            //seventh tour ====================
+            count = 0;
+            hold = m[0][2];
+            if (hold != ' ') {
+                //1st run===================
+                for (j=0; j<=2; j++) {
+                    if (m[j][2] == whatComputerChose) {
+                        count++;
+                    }
+                }
+                k=0;
+                while (k<=2) {
+                    if ((m[k][2] == ' ') && (ta[k][2] != 2)) {
+                        if (count == 0) {
+                            ta[k][2] = count+1;
+                        }else{
+                            ta[k][2] = count;
+                        }
+                    }
+                    k++;
+                }
+                //2nd run===================
+                count = 0; l = 0;
+                for (j=0; j<=2; j++) {
+                    if (m[2-j][l] == whatComputerChose) {
+                        count++;
+                    }
+                    l++;
+                }
+                k=0; l =0;
+                while (k<=2) {
+                    if ((m[2-k][l] == ' ') && (ta[2-k][l] != 2)) {
+                        if (count == 0) {
+                            ta[2-k][l] = count+1;
+                        }else{
+                            ta[2-k][l] = count;
+                        }
+                    }
+                    k++;
+                    l++;
+                }
+                //3rd run===================
+                count = 0;
+                for (j=2; j>=0; j--) {
+                    if (m[0][j] == whatComputerChose) {
+                        count++;
+                    }
+                }
+                k=2;
+                while (k>=0) {
+                    if ((m[0][k] == ' ') && (ta[0][k] != 2)) {
+                        if (count == 0) {
+                            ta[0][k] = count+1;
+                        }else{
+                            ta[0][k] = count;
+                        }
+                    }
+                    k--;
+                }
+            }
+            //eighth tour ====================
+            count = 0;
+            hold = m[0][1];
+            if (hold != ' ') {
+                //1st run===================
+                for (j=0; j<=2; j++) {
+                    if (m[j][1] == whatComputerChose) {
+                        count++;
+                    }
+                }
+                k=0;
+                while (k<=2) {
+                    if ((m[k][1] == ' ') && (ta[k][1] != 2)) {
+                        if (count == 0) {
+                            ta[k][1] = count+1;
+                        }else{
+                            ta[k][1] = count;
+                        }
+                    }
+                    k++;
+                }
+            }
+            // end of Algortihme attack
+            //if the deff table is all zeros then get random set
+            int check0 = 0;
+            for (i = 0; i <=2; i++) {
+              for (j = 0; j <=2; j++) {
+                if(ta[i][j] != 0){
+                  check0 = 1;
+                }
+              }
+            }
+            if(check0 == 0){
+            do{
+                srand((unsigned) time(NULL));
+                *xc = rand() % 3;
+                *yc = rand() % 3;
+            }while(m[*xc][*yc] != ' ');
+            return;
+           }
+           //check if there's ones and twos
+            isthere2a = 0;
+            isthere2a = 0; istheremore2a=0;
+            for(i=0; i<=2; i++) {
+                for(j=0; j<=2; j++) {
+                    if (ta[i][j] == 2) {
+                        if (isthere2a == 1) {
+                            istheremore2a = 1;
+                            xof22at = i;
+                            yof22at = j;
+                        }else{
+                            isthere2a = 1;
+                            xof2at = i;
+                            yof2at = j;
+                        }
+                    }
+                }
+            }
+            //if theres no twos in attack
+            if ((isthere2a == 0) && (istheremore2a == 0)) {
+                // Algorithm of bulding line to win
+                //first tour ===============
+                //1st run==================
+                done =0;
+                if ((m[0][0] == whatComputerChose) && ((m[0][1] == ' ') || (m[0][1] == whatComputerChose)) && ((m[0][2] == ' ') || (m[0][2] == whatComputerChose))) {
+                    if (m[0][1] == ' ') {
+                        *xc = 0;
+                        *yc = 1;
+                        done = 1;
+                    }else{
+                        if (m[0][2] == ' ') {
+                            *xc = 0;
+                            *yc = 2;
+                            done = 1;
+                        }
+                    }
+                }else{
+                    //2nd run===========
+                    if ((m[0][0] == whatComputerChose) && ((m[1][1] == ' ') || (m[1][1] == whatComputerChose)) && ((m[2][2] == ' ') || (m[2][2] == whatComputerChose))) {
+                        if (m[1][1] == ' ') {
+                            *xc = 1;
+                            *yc = 1;
+                            done = 1;
+                        }else{
+                            if (m[2][2] == ' ') {
+                                *xc = 2;
+                                *yc = 2;
+                                done = 1;
+                            }
+                        }
+                    }else{
+                        //3rd run =========
+                        if ((m[0][0] == whatComputerChose) && ((m[1][0] == ' ') || (m[1][0] == whatComputerChose)) && ((m[2][0] == ' ') || ((m[2][0] == whatComputerChose)))) {
+                            if (m[1][0] == ' ') {
+                                *xc = 1;
+                                *yc = 0;
+                                done = 1;
+                            }else{
+                                if (m[2][0] == ' ') {
+                                    *xc = 2;
+                                    *yc = 0;
+                                    done = 1;
+                                }
+                            }
+                        }else{
+                            //second tour =======
+                            //1st run
+                            if ((m[1][0] == whatComputerChose) && ((m[1][1] == ' ') || (m[1][1] == whatComputerChose)) && ((m[1][2] == ' ') || ((m[1][2] == whatComputerChose)))) {
+                                if (m[1][1] == ' ') {
+                                    *xc = 1;
+                                    *yc = 1;
+                                    done = 1;
+                                }else{
+                                    if (m[1][2] == ' ') {
+                                        *xc = 1;
+                                        *yc = 2;
+                                        done = 1;
+                                    }
+                                }
+                            }else{
+                                //third tour =======
+                                //1st run
+                                if ((m[2][0] ==whatComputerChose) && ((m[1][0] == ' ') || (m[1][0] == whatComputerChose)) && ((m[0][0] == ' ') || ((m[0][0] == whatComputerChose)))) {
+                                    if (m[1][0] == ' ') {
+                                        *xc = 1;
+                                        *yc = 0;
+                                        done = 1;
+                                    }else{
+                                        if (m[0][0] == ' ') {
+                                            *xc = 0;
+                                            *yc = 0;
+                                            done = 1;
+                                        }
+                                    }
+                                }else{
+                                    //2nd run -=============
+                                    if ((m[2][0] == whatComputerChose) && ((m[1][1] == ' ') || (m[1][1] == whatComputerChose)) && ((m[0][2] == ' ') || ((m[0][2] == whatComputerChose)))) {
+                                        if (m[1][1] == ' ') {
+                                            *xc = 1;
+                                            *yc = 1;
+                                            done = 1;
+                                        }else{
+                                            if (m[0][2] == ' ') {
+                                                *xc = 0;
+                                                *yc = 2;
+                                                done = 1;
+                                            }
+                                        }
+                                    }else{
+                                        //3rd run========
+                                        if ((m[2][0] == whatComputerChose) && ((m[2][1] == ' ') || (m[2][1] == whatComputerChose)) && ((m[2][2] == ' ') || ((m[2][2] == whatComputerChose)))) {
+                                            if (m[2][1] == ' ') {
+                                                *xc = 2;
+                                                *yc = 1;
+                                                done = 1;
+                                            }else{
+                                                if (m[2][2] == ' ') {
+                                                    *xc = 2;
+                                                    *yc = 2;
+                                                    done = 1;
+                                                }
+                                            }
+                                        }else{
+                                            //fourth tour =============
+                                            //1st tour ==========
+                                            if ((m[2][1] == whatComputerChose) && ((m[1][1] == ' ') || (m[1][1] == whatComputerChose)) && ((m[0][1] == ' ') || ((m[0][1] == whatComputerChose)))) {
+                                                if (m[2][1] == ' ') {
+                                                    *xc = 2;
+                                                    *yc = 1;
+                                                    done = 1;
+                                                }else{
+                                                    if (m[0][1] == ' ') {
+                                                        *xc = 0;
+                                                        *yc = 1;
+                                                        done = 1;
+                                                    }
+                                                }
+                                            }else{
+                                              //fifth tour =============
+                                              //1st run ==========
+                                              if ((m[2][2] == whatComputerChose) && ((m[2][1] == ' ') || (m[2][1] == whatComputerChose)) && ((m[0][2] == ' ') || ((m[0][2] == whatComputerChose)))) {
+                                                  if (m[2][1] == ' ') {
+                                                      *xc = 2;
+                                                      *yc = 1;
+                                                      done = 1;
+                                                  }else{
+                                                      if (m[0][2] == ' ') {
+                                                          *xc = 0;
+                                                          *yc = 2;
+                                                          done = 1;
+                                                      }
+                                                  }
+                                              }else{
+                                                  //2nd run ==========
+                                                  if ((m[2][2] == whatComputerChose) && ((m[1][1] == ' ') || (m[1][1] == whatComputerChose)) && ((m[0][0] == ' ') || ((m[0][0] == whatComputerChose)))) {
+                                                      if (m[1][1] == ' ') {
+                                                          *xc = 1;
+                                                          *yc = 1;
+                                                          done = 1;
+                                                      }else{
+                                                          if (m[0][0] == ' ') {
+                                                              *xc = 0;
+                                                              *yc = 0;
+                                                              done = 1;
+                                                          }
+                                                      }
+                                                  }else{
+                                                      //3rd run ========
+                                                      if ((m[2][2] == whatComputerChose) && ((m[1][2] == ' ') || (m[1][2] == whatComputerChose)) && ((m[0][2] == ' ') || ((m[0][2] == whatComputerChose)))) {
+                                                          if (m[1][2] == ' ') {
+                                                              *xc = 1;
+                                                              *yc = 2;
+                                                              done = 1;
+                                                          }else{
+                                                              if (m[0][2] == ' ') {
+                                                                  *xc = 0;
+                                                                  *yc = 2;
+                                                                  done = 1;
+                                                              }
+                                                          }
+                                                        }else{
+                                                //sixth tour =============
+                                                //1st run ==========
+                                                if ((m[1][2] == whatComputerChose) && ((m[1][1] == ' ') || (m[1][1] == whatComputerChose)) && ((m[1][0] == ' ') || ((m[1][0] ==whatComputerChose)))) {
+                                                    if (m[1][1] == ' ') {
+                                                        *xc = 1;
+                                                        *yc = 1;
+                                                        done = 1;
+                                                    }else{
+                                                        if (m[1][0] == ' ') {
+                                                            *xc = 1;
+                                                            *yc = 0;
+                                                            done = 1;
+                                                        }
+                                                    }
+                                                }else{
+                                                    //seventh tour =============
+                                                    //1st run ==========
+                                                    if ((m[0][2] == whatComputerChose) && ((m[1][2] == ' ') || (m[1][2] == whatComputerChose)) && ((m[1][2] == ' ') || ((m[1][2] == whatComputerChose)))) {
+                                                        if (m[1][2] == ' ') {
+                                                            *xc = 1;
+                                                            *yc = 2;
+                                                            done = 1;
+                                                        }else{
+                                                            if (m[2][2] == ' ') {
+                                                                *xc = 2;
+                                                                *yc = 2;
+                                                                done = 1;
+                                                            }
+                                                        }
+                                                    }else{
+                                                        //2nd run ==========
+                                                        if ((m[0][2] == whatComputerChose) && ((m[1][1] == ' ') || (m[1][1] == whatComputerChose)) && ((m[2][0] == ' ') || ((m[2][0] == whatComputerChose)))) {
+                                                            if (m[1][1] == ' ') {
+                                                                *xc = 1;
+                                                                *yc = 1;
+                                                                done = 1;
+                                                            }else{
+                                                                if (m[2][0] == ' ') {
+                                                                    *xc = 2;
+                                                                    *yc = 0;
+                                                                    done = 1;
+                                                                }
+                                                            }
+                                                        }else{
+                                                            //3rd run ========
+                                                            if ((m[0][2] == whatComputerChose) && ((m[0][1] == ' ') || (m[1][0] == whatComputerChose)) && ((m[0][0] == ' ') || ((m[0][0] == whatComputerChose)))) {
+                                                                if (m[0][1] == ' ') {
+                                                                    *xc = 0;
+                                                                    *yc = 1;
+                                                                    done = 1;
+                                                                }else{
+                                                                    if (m[0][0] == ' ') {
+                                                                        *xc = 0;
+                                                                        *yc = 0;
+                                                                        done = 1;
+                                                                    }
+                                                                }
+                                                            }else{
+                                                                //eigth tour =============
+                                                                //1st run =========
+                                                                if ((((m[0][1] == whatComputerChose) && ((m[1][1] == ' ') || (m[1][1] == whatComputerChose)) && ((m[2][1] == ' ') || (m[2][1] == whatComputerChose))) || (((m[0][0] == whatComputerChose) || (m[0][0] == ' ')) && ((m[0][2] == whatComputerChose) || (m[0][2] == ' '))))) {
+                                                                    if (m[1][1] == ' ') {
+                                                                        *xc = 1;
+                                                                        *yc = 1;
+                                                                        done = 1;
+                                                                    }else{
+                                                                        if (m[2][1] == ' ') {
+                                                                            *xc = 2;
+                                                                            *yc = 1;
+                                                                            done = 1;
+                                                                        }
+                                                                    }
+                                                                }else{
+                                                                    //ninth tour =============
+                                                                    //1st run =========
+                                                                    if ((m[1][1] == whatComputerChose) && (((m[1][0] ==whatComputerChose) || (m[1][0] == ' ')) && ((m[1][2] == whatComputerChose) || (m[1][2] == ' ')))) {
+                                                                        if (m[1][0] == ' ') {
+                                                                            *xc = 1;
+                                                                            *yc = 0;
+                                                                            done = 1;
+                                                                        }else{
+                                                                            if (m[1][2] == ' ') {
+                                                                                *xc = 1;
+                                                                                *yc = 2;
+                                                                                done = 1;
+                                                                            }
+                                                                        }
+                                                                    }else{
+                                                                        if ((m[1][1] == whatComputerChose) && (((m[0][1] == whatComputerChose) || (m[0][1] == ' ')) && ((m[2][1] == whatComputerChose) || (m[2][1] == ' ')))){
+                                                                            if (m[0][1] == ' ') {
+                                                                                *xc = 0;
+                                                                                *yc = 1;
+                                                                                done = 1;
+                                                                            }else{
+                                                                                if (m[2][1] == ' ') {
+                                                                                    *xc = 2;
+                                                                                    *yc = 1;
+                                                                                    done = 1;
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
+                                                           }
+                                                        }
+                                                      }
+
+                                                    }
+                                                }
+                                              }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // End of Algorithm of bulding line to win//
+                }
+                //if none of the above set dot in random place
+                if (done == 0) {
+                    done =1;
+                    for (i=0; (i<=2) && (done == 1); i++) {
+                        for (j=0; (j<=2) && (done == 1); j++) {
+                            if (ta[i][j] == 1) {
+                                *xc = i;
+                                *yc = j;
+                                done = 0;
+                            }
+                        }
+                    }
+                }
+              }
+            }else{
+                //if theres only two in attack
+                if ((isthere2a == 1) && (istheremore2a == 0)) {
+                    *xc = xof2at;
+                    *yc = yof2at;
+                }else{
+                    //if there's more then two in attack
+                    if ((isthere2a == 1) && (istheremore2a == 1)) {
+                        *xc = xof22at;
+                        *yc = yof22at;
+                    }
+                }
+            }
+        }else{
+            //if theres only two
+            if ((isthere2 == 1) && (istheremore2 == 0)) {
+                // Begin Algorithm attack
+                //first tour ===============
+                count = 0;
+                hold = m[0][0];
+                if (hold != ' ') {
+                    //1st run===================
+                    for (j=0; j<=2; j++) {
+                        if (m[0][j] == whatComputerChose) {
+                            count++;
+                        }
+                    }
+                    k=0;
+                    while (k<=2) {
+                        if ((m[0][k] == ' ') && (ta[0][k] != 2)) {
+                            if (count == 0) {
+                                ta[0][k] = count+1;
+                            }else{
+                                ta[0][k] = count;
+                            }
+                        }
+                        k++;
+                    }
+                    //2nd run===================
+                    count = 0;
+                    for (j=0; j<=2; j++) {
+                        if (m[j][j] == whatComputerChose) {
+                            count++;
+                        }
+                    }
+                    k=0;
+                    while (k<=2) {
+                        if ((m[k][k] == ' ') && (ta[k][k] != 2)) {
+                            if (count == 0) {
+                                ta[k][k] = count+1;
+                            }else{
+                                ta[k][k] = count;
+                            }
+                        }
+                        k++;
+                    }
+                    //3rd run===================
+                    count = 0;
+                    for (j=0; j<=2; j++) {
+                        if (m[j][0] == whatComputerChose) {
+                            count++;
+                        }
+                    }
+                    k=0;
+                    while (k<=2) {
+                        if ((m[k][0] == ' ') && (ta[k][0] != 2)) {
+                            if (count == 0) {
+                                ta[k][0] = count+1;
+                            }else{
+                                ta[k][0] = count;
+                            }
+                        }
+                        k++;
+                    }
+                }
+                //second tour ==============
+                count = 0;
+                hold = m[1][0];
+                if (hold != ' ') {
+                    //1st run===================
+                    for (j=0; j<=2; j++) {
+                        if (m[1][j] == whatComputerChose) {
+                            count++;
+                        }
+                    }
+                    k=0;
+                    while (k<=2) {
+                        if ((m[1][k] == ' ') && (ta[1][k] != 2)) {
+                            if (count == 0) {
+                                ta[1][k] = count+1;
+                            }else{
+                                ta[1][k] = count;
+                            }
+                        }
+                        k++;
+                    }
+                }
+                // third tour ===================
+                count = 0;
+                hold = m[2][0];
+                if (hold != ' ') {
+                    //1st run===================
+                    for (j=2; j>=0; j--) {
+                        if (m[j][1] == whatComputerChose) {
+                            count++;
+                        }
+                    }
+                    k=2;
+                    while (k>=0) {
+                        if ((m[k][1] == ' ') && (ta[k][1] != 2)) {
+                            if (count == 0) {
+                                ta[k][1] = count+1;
+                            }else{
+                                ta[k][1] = count;
+                            }
+                        }
+                        k--;
+                    }
+                    //2nd run===================
+                    count = 0;
+                    l=0;
+                    for (j=2; j>=0; j--) {
+                        if (m[j][l] == whatComputerChose) {
+                            count++;
+                        }
+                        l++;
+                    }
+                    k=2; l=0;
+                    while (k>=0) {
+                        if ((m[k][l] == ' ') && (ta[k][l] != 2)) {
+                            if (count == 0) {
+                                ta[k][l] = count+1;
+                            }else{
+                                ta[k][l] = count;
+                            }
+                        }
+                        k--;
+                        l++;
+                    }
+                    //3rd run===================
+                    count = 0;
+                    for (j=0; j<=2; j++) {
+                        if (m[2][j] == whatComputerChose) {
+                            count++;
+                        }
+                    }
+                    k=0;
+                    while (k<=2) {
+                        if ((m[2][k] == ' ') && (ta[2][k] != 2)) {
+                            if (count == 0) {
+                                ta[2][k] = count+1;
+                            }else{
+                                ta[2][k] = count;
+                            }
+                        }
+                        k++;
+                    }
+                }
+                //fourth tour ====================
+                count = 0;
+                hold = m[2][1];
+                if (hold != ' ') {
+                    //1st run===================
+                    for (j=2; j>=0; j--) {
+                        if (m[j][1] == whatComputerChose) {
+                            count++;
+                        }
+                    }
+                    k=2;
+                    while (k>=0) {
+                        if ((m[k][1] == ' ') && (ta[k][1] != 2)) {
+                            if (count == 0) {
+                                ta[k][1] = count+1;
+                            }else{
+                                ta[k][1] = count;
+                            }
+                        }
+                        k--;
+                    }
+                }
+                //fifth tour ====================
+                count = 0;
+                hold = m[2][2];
+                if (hold != ' ') {
+                    //1st run===================
+                    for (j=2; j>=0; j--) {
+                        if (m[2][j] == whatComputerChose) {
+                            count++;
+                        }
+                    }
+                    k=2;
+                    while (k>=0) {
+                        if ((m[2][k] == ' ') && (ta[2][k] != 2)) {
+                            if (count == 0) {
+                                ta[2][k] = count+1;
+                            }else{
+                                ta[2][k] = count;
+                            }
+                        }
+                        k--;
+                    }
+                    //2nd run==================
+                    count = 0; l = 2;
+                    for (j=2; j>=0; j--) {
+                        if (m[j][l] == whatComputerChose) {
+                            count++;
+                        }
+                        l--;
+                    }
+                    k=2; l =2;
+                    while (k>=0) {
+                        if ((m[k][l] == ' ') && (ta[k][l] != 2)) {
+                            if (count == 0) {
+                                ta[k][l] =  count+1;
+                            }else{
+                                ta[k][l] = count;
+                            }
+                        }
+                        k--;
+                        l--;
+                    }
+                    //3rd run ====================
+                    count = 0;
+                    for (j=2; j>=0; j--) {
+                        if (m[j][2] == whatComputerChose) {
+                            count++;
+                        }
+                    }
+                    k=2;
+                    while (k>=0) {
+                        if ((m[k][2] == ' ') && (ta[k][2] != 2)) {
+                            if (count == 0) {
+                                ta[k][2] = count+1;
+                            }else{
+                                ta[k][2] = count;
+                            }
+                        }
+                        k--;
+                    }
+                }
+                //sixth tour ====================
+                count = 0;
+                hold = m[1][2];
+                if (hold != ' ') {
+                    //1st run===================
+                    for (j=2; j>=0; j--) {
+                        if (m[1][j] == whatComputerChose) {
+                            count++;
+                        }
+                    }
+                    k=2;
+                    while (k>=0) {
+                        if ((m[1][k] == ' ') && (ta[1][k] != 2)) {
+                            if (count == 0) {
+                                ta[1][k] = count+1;
+                            }else{
+                                ta[1][k] = count;
+                            }
+                        }
+                        k--;
+                    }
+                }
+                //seventh tour ====================
+                count = 0;
+                hold = m[0][2];
+                if (hold != ' ') {
+                    //1st run===================
+                    for (j=0; j<=2; j++) {
+                        if (m[j][2] == whatComputerChose) {
+                            count++;
+                        }
+                    }
+                    k=0;
+                    while (k<=2) {
+                        if ((m[k][2] == ' ') && (ta[k][2] != 2)) {
+                            if (count == 0) {
+                                ta[k][2] = count+1;
+                            }else{
+                                ta[k][2] = count;
+                            }
+                        }
+                        k++;
+                    }
+                    //2nd run===================
+                    count = 0; l = 0;
+                    for (j=0; j<=2; j++) {
+                        if (m[2-j][l] == whatComputerChose) {
+                            count++;
+                        }
+                        l++;
+                    }
+                    k=0; l =0;
+                    while (k<=2) {
+                        if ((m[2-k][l] == ' ') && (ta[2-k][l] != 2)) {
+                            if (count == 0) {
+                                ta[2-k][l] = count+1;
+                            }else{
+                                ta[2-k][l] = count;
+                            }
+                        }
+                        k++;
+                        l++;
+                    }
+                    //3rd run===================
+                    count = 0;
+                    for (j=2; j>=0; j--) {
+                        if (m[0][j] == whatComputerChose) {
+                            count++;
+                        }
+                    }
+                    k=2;
+                    while (k>=0) {
+                        if ((m[0][k] == ' ') && (ta[0][k] != 2)) {
+                            if (count == 0) {
+                                ta[0][k] = count+1;
+                            }else{
+                                ta[0][k] = count;
+                            }
+                        }
+                        k--;
+                    }
+                }
+                //eighth tour ====================
+                count = 0;
+                hold = m[0][1];
+                if (hold != ' ') {
+                    //1st run===================
+                    for (j=0; j<=2; j++) {
+                        if (m[j][1] == whatComputerChose) {
+                            count++;
+                        }
+                    }
+                    k=0;
+                    while (k<=2) {
+                        if ((m[k][1] == ' ') && (ta[k][1] != 2)) {
+                            if (count == 0) {
+                                ta[k][1] = count+1;
+                            }else{
+                                ta[k][1] = count;
+                            }
+                        }
+                        k++;
+                    }
+                }
+                // end of Algortihme attack
+                isthere2a = 0;
+                isthere2a = 0; istheremore2a=0;
+                for(i=0; i<=2; i++) {
+                    for(j=0; j<=2; j++) {
+                        if (ta[i][j] == 2) {
+                            if (isthere2a == 1) {
+                                istheremore2a = 1;
+                                xof22at = i;
+                                yof22at = j;
+                            }else{
+                                isthere2a = 1;
+                                xof2at = i;
+                                yof2at = j;
+                            }
+                        }
+                    }
+                }
+                if ((isthere2a == 1) && (istheremore2a == 0)) {
+                    *xc = xof2at;
+                    *yc = yof2at;
+                }else{
+                    *xc = xof2;
+                    *yc = yof2;
+                }
+            }else{
+                //if there's more then two
+                if ((isthere2 == 1) && (istheremore2 == 1)) {
+                    // Begin Algorithm attack
+                    //first tour ===============
+                    count = 0;
+                    hold = m[0][0];
+                    if (hold != ' ') {
+                        //1st run===================
+                        for (j=0; j<=2; j++) {
+                            if (m[0][j] == whatComputerChose) {
+                                count++;
+                            }
+                        }
+                        k=0;
+                        while (k<=2) {
+                            if ((m[0][k] == ' ') && (ta[0][k] != 2)) {
+                                if (count == 0) {
+                                    ta[0][k] = count+1;
+                                }else{
+                                    ta[0][k] = count;
+                                }
+                            }
+                            k++;
+                        }
+                        //2nd run===================
+                        count = 0;
+                        for (j=0; j<=2; j++) {
+                            if (m[j][j] == whatComputerChose) {
+                                count++;
+                            }
+                        }
+                        k=0;
+                        while (k<=2) {
+                            if ((m[k][k] == ' ') && (ta[k][k] != 2)) {
+                                if (count == 0) {
+                                    ta[k][k] = count+1;
+                                }else{
+                                    ta[k][k] = count;
+                                }
+                            }
+                            k++;
+                        }
+                        //3rd run===================
+                        count = 0;
+                        for (j=0; j<=2; j++) {
+                            if (m[j][0] == whatComputerChose) {
+                                count++;
+                            }
+                        }
+                        k=0;
+                        while (k<=2) {
+                            if ((m[k][0] == ' ') && (ta[k][0] != 2)) {
+                                if (count == 0) {
+                                    ta[k][0] = count+1;
+                                }else{
+                                    ta[k][0] = count;
+                                }
+                            }
+                            k++;
+                        }
+                    }
+                    //second tour ==============
+                    count = 0;
+                    hold = m[1][0];
+                    if (hold != ' ') {
+                        //1st run===================
+                        for (j=0; j<=2; j++) {
+                            if (m[1][j] == whatComputerChose) {
+                                count++;
+                            }
+                        }
+                        k=0;
+                        while (k<=2) {
+                            if ((m[1][k] == ' ') && (ta[1][k] != 2)) {
+                                if (count == 0) {
+                                    ta[1][k] = count+1;
+                                }else{
+                                    ta[1][k] = count;
+                                }
+                            }
+                            k++;
+                        }
+                    }
+                    // third tour ===================
+                    count = 0;
+                    hold = m[2][0];
+                    if (hold != ' ') {
+                        //1st run===================
+                        for (j=2; j>=0; j--) {
+                            if (m[j][1] == whatComputerChose) {
+                                count++;
+                            }
+                        }
+                        k=2;
+                        while (k>=0) {
+                            if ((m[k][1] == ' ') && (ta[k][1] != 2)) {
+                                if (count == 0) {
+                                    ta[k][1] = count+1;
+                                }else{
+                                    ta[k][1] = count;
+                                }
+                            }
+                            k--;
+                        }
+                        //2nd run===================
+                        count = 0;
+                        l=0;
+                        for (j=2; j>=0; j--) {
+                            if (m[j][l] == whatComputerChose) {
+                                count++;
+                            }
+                            l++;
+                        }
+                        k=2; l=0;
+                        while (k>=0) {
+                            if ((m[k][l] == ' ') && (ta[k][l] != 2)) {
+                                if (count == 0) {
+                                    ta[k][l] = count+1;
+                                }else{
+                                    ta[k][l] = count;
+                                }
+                            }
+                            k--;
+                            l++;
+                        }
+                        //3rd run===================
+                        count = 0;
+                        for (j=0; j<=2; j++) {
+                            if (m[2][j] == whatComputerChose) {
+                                count++;
+                            }
+                        }
+                        k=0;
+                        while (k<=2) {
+                            if ((m[2][k] == ' ') && (ta[2][k] != 2)) {
+                                if (count == 0) {
+                                    ta[2][k] = count+1;
+                                }else{
+                                    ta[2][k] = count;
+                                }
+                            }
+                            k++;
+                        }
+                    }
+                    //fourth tour ====================
+                    count = 0;
+                    hold = m[2][1];
+                    if (hold != ' ') {
+                        //1st run===================
+                        for (j=2; j>=0; j--) {
+                            if (m[j][1] == whatComputerChose) {
+                                count++;
+                            }
+                        }
+                        k=2;
+                        while (k>=0) {
+                            if ((m[k][1] == ' ') && (ta[k][1] != 2)) {
+                                if (count == 0) {
+                                    ta[k][1] = count+1;
+                                }else{
+                                    ta[k][1] = count;
+                                }
+                            }
+                            k--;
+                        }
+                    }
+                    //fifth tour ====================
+                    count = 0;
+                    hold = m[2][2];
+                    if (hold != ' ') {
+                        //1st run===================
+                        for (j=2; j>=0; j--) {
+                            if (m[2][j] == whatComputerChose) {
+                                count++;
+                            }
+                        }
+                        k=2;
+                        while (k>=0) {
+                            if ((m[2][k] == ' ') && (ta[2][k] != 2)) {
+                                if (count == 0) {
+                                    ta[2][k] = count+1;
+                                }else{
+                                    ta[2][k] = count;
+                                }
+                            }
+                            k--;
+                        }
+                        //2nd run==================
+                        count = 0; l = 2;
+                        for (j=2; j>=0; j--) {
+                            if (m[j][l] == whatComputerChose) {
+                                count++;
+                            }
+                            l--;
+                        }
+                        k=2; l =2;
+                        while (k>=0) {
+                            if ((m[k][l] == ' ') && (ta[k][l] != 2)) {
+                                if (count == 0) {
+                                    ta[k][l] =  count+1;
+                                }else{
+                                    ta[k][l] = count;
+                                }
+                            }
+                            k--;
+                            l--;
+                        }
+                        //3rd run ====================
+                        count = 0;
+                        for (j=2; j>=0; j--) {
+                            if (m[j][2] == whatComputerChose) {
+                                count++;
+                            }
+                        }
+                        k=2;
+                        while (k>=0) {
+                            if ((m[k][2] == ' ') && (ta[k][2] != 2)) {
+                                if (count == 0) {
+                                    ta[k][2] = count+1;
+                                }else{
+                                    ta[k][2] = count;
+                                }
+                            }
+                            k--;
+                        }
+                    }
+                    //sixth tour ====================
+                    count = 0;
+                    hold = m[1][2];
+                    if (hold != ' ') {
+                        //1st run===================
+                        for (j=2; j>=0; j--) {
+                            if (m[1][j] == whatComputerChose) {
+                                count++;
+                            }
+                        }
+                        k=2;
+                        while (k>=0) {
+                            if ((m[1][k] == ' ') && (ta[1][k] != 2)) {
+                                if (count == 0) {
+                                    ta[1][k] = count+1;
+                                }else{
+                                    ta[1][k] = count;
+                                }
+                            }
+                            k--;
+                        }
+                    }
+                    //seventh tour ====================
+                    count = 0;
+                    hold = m[0][2];
+                    if (hold != ' ') {
+                        //1st run===================
+                        for (j=0; j<=2; j++) {
+                            if (m[j][2] == whatComputerChose) {
+                                count++;
+                            }
+                        }
+                        k=0;
+                        while (k<=2) {
+                            if ((m[k][2] == ' ') && (ta[k][2] != 2)) {
+                                if (count == 0) {
+                                    ta[k][2] = count+1;
+                                }else{
+                                    ta[k][2] = count;
+                                }
+                            }
+                            k++;
+                        }
+                        //2nd run===================
+                        count = 0; l = 0;
+                        for (j=0; j<=2; j++) {
+                            if (m[2-j][l] == whatComputerChose) {
+                                count++;
+                            }
+                            l++;
+                        }
+                        k=0; l =0;
+                        while (k<=2) {
+                            if ((m[2-k][l] == ' ') && (ta[2-k][l] != 2)) {
+                                if (count == 0) {
+                                    ta[2-k][l] = count+1;
+                                }else{
+                                    ta[2-k][l] = count;
+                                }
+                            }
+                            k++;
+                            l++;
+                        }
+                        //3rd run===================
+                        count = 0;
+                        for (j=2; j>=0; j--) {
+                            if (m[0][j] == whatComputerChose) {
+                                count++;
+                            }
+                        }
+                        k=2;
+                        while (k>=0) {
+                            if ((m[0][k] == ' ') && (ta[0][k] != 2)) {
+                                if (count == 0) {
+                                    ta[0][k] = count+1;
+                                }else{
+                                    ta[0][k] = count;
+                                }
+                            }
+                            k--;
+                        }
+                    }
+                    //eighth tour ====================
+                    count = 0;
+                    hold = m[0][1];
+                    if (hold != ' ') {
+                        //1st run===================
+                        for (j=0; j<=2; j++) {
+                            if (m[j][1] ==whatComputerChose) {
+                                count++;
+                            }
+                        }
+                        k=0;
+                        while (k<=2) {
+                            if ((m[k][1] == ' ') && (ta[k][1] != 2)) {
+                                if (count == 0) {
+                                    ta[k][1] = count+1;
+                                }else{
+                                    ta[k][1] = count;
+                                }
+                            }
+                            k++;
+                        }
+                    }
+                    // end of Algortihme attack
+                    isthere2a = 0;
+                    isthere2a = 0; istheremore2a=0;
+                    for(i=0; i<=2; i++) {
+                        for(j=0; j<=2; j++) {
+                            if (ta[i][j] == 2) {
+                                if (isthere2a == 1) {
+                                    istheremore2a = 1;
+                                    xof22at = i;
+                                    yof22at = j;
+                                }else{
+                                    isthere2a = 1;
+                                    xof2at = i;
+                                    yof2at = j;
+                                }
+                            }
+                        }
+                    }
+                    if ((isthere2a == 1) && (istheremore2a == 0)) {
+                        *xc = xof2at;
+                        *yc = yof2at;
+                    }else{
+                        *xc = xof22;
+                        *yc = yof22;
+                    }
+                }
+            }
+        }
+
+}
+}
+/**
+ * function initializes the main m matrix to spaces.
+ * char m[3][3] returned main board table.
+ */
+void init (char (*m)[3]){
+    int i,j;
+    for (i=0; i<=2; i++) {
+        for(j=0; j<=2; j++){
+            m[i][j] = ' ';
+        }
+    }
+}
+/**
+ * function  Initializes and loads all the images needed into memory to show the main board of game play.
+ * struct playgameScreen containing all the necesseary entities.
+ */
+playgameScreen initGamePlay(){
+  playgameScreen pgs;
+  int i;
+  char name[50];
+  FILE * f = NULL;
+  char themePath[256];
+  pgs.back = IMG_Load("Resources/playback.png");
+  pgs.x = IMG_Load("Resources/x.png");
+  pgs.o = IMG_Load("Resources/o.png");
+  pgs.splashCharIndicatorO = IMG_Load("Resources/youplaywitho.png");
+  pgs.splashCharIndicatorX = IMG_Load("Resources/youplaywithx.png");
+  pgs.backbut = IMG_Load("Resources/back.png");
+  pgs.backScore = IMG_Load("Resources/backscore.png");
+  if((pgs.back == NULL) || (pgs.x == NULL) || (pgs.o == NULL)
+   || (pgs.backbut == NULL) || (pgs.backScore == NULL)){
+    printf("cant load images\n");
+  }
+
+  //initializing all the win-lines//
+  for (i = 0; i < 8; i++) {
+    sprintf(name, "Resources/lines/line%d.png", i+1);
+    pgs.l[i].line = IMG_Load(name);
+    if(pgs.l[i].line == NULL){
+      printf("error occured\n");
+    }else{
+      switch (i) {
+        case 0:
+         pgs.l[0].linePos.x = 75;
+         pgs.l[0].linePos.y = 77;
+         pgs.l[0].linePos.h = pgs.l[0].line->h ;
+         pgs.l[0].linePos.w = pgs.l[0].line->w ;
+        break;
+        case 1:
+         pgs.l[1].linePos.x = 250;
+         pgs.l[1].linePos.y = 77;
+         pgs.l[1].linePos.h = pgs.l[1].line->h ;
+         pgs.l[1].linePos.w = pgs.l[1].line->w ;
+        break;
+        case 2:
+        pgs.l[2].linePos.x = 89;
+        pgs.l[2].linePos.y = 79;
+        pgs.l[2].linePos.h = pgs.l[2].line->h ;
+        pgs.l[2].linePos.w = pgs.l[2].line->w ;
+        break;
+        case 3:
+        pgs.l[3].linePos.x =75;
+        pgs.l[3].linePos.y = 245;
+        pgs.l[3].linePos.h = pgs.l[3].line->h ;
+        pgs.l[3].linePos.w = pgs.l[3].line->w ;
+        break;
+        case 4:
+        pgs.l[4].linePos.x =74;
+        pgs.l[4].linePos.y =137;
+        pgs.l[4].linePos.h = pgs.l[4].line->h ;
+        pgs.l[4].linePos.w = pgs.l[4].line->w ;
+        break;
+        case 5:
+        pgs.l[5].linePos.x =147;
+        pgs.l[5].linePos.y =77;
+        pgs.l[5].linePos.h = pgs.l[5].line->h ;
+        pgs.l[5].linePos.w = pgs.l[5].line->w ;
+        break;
+        case 6:
+        pgs.l[6].linePos.x =74;
+        pgs.l[6].linePos.y =352;
+        pgs.l[6].linePos.h = pgs.l[6].line->h ;
+        pgs.l[6].linePos.w = pgs.l[6].line->w ;
+        break;
+        case 7:
+        pgs.l[7].linePos.x =361;
+        pgs.l[7].linePos.y =77;
+        pgs.l[7].linePos.h = pgs.l[7].line->h ;
+        pgs.l[7].linePos.w = pgs.l[7].line->w ;
+        break;
+      }
+    }
+  }
+  pgs.backbutPos.x = 10; pgs.backbutPos.y = 455;
+  pgs.backbutPos.h = pgs.backbut->h ; pgs.backbutPos.w = pgs.backbut->w;
+  pgs.backPos.x = 0; pgs.backPos.y = 0;
+  pgs.backPos.h = pgs.back->h; pgs.backPos.w = pgs.back->w;
+  pgs.backScorePos.x = 90; pgs.backScorePos.y = 428;
+  pgs.backScorePos.h = pgs.backScore->h; pgs.backScorePos.w = pgs.backScore->w;
+  pgs.scorePos.x = 127; pgs.scorePos.y = 433;
+  pgs.splashIndicatorPos.x=100;
+  pgs.splashIndicatorPos.y=150;
+    pgs.splashIndicatorPos.h=pgs.splashCharIndicatorO->h;
+  pgs.splashIndicatorPos.w=pgs.splashCharIndicatorO->w;
+
+return pgs;
+}
+/**
+ * function Shows and blits all the game play screen like the board.
+ * return nothing
+ * deciding what background (theme) should be applied when openning this section
+ */
+void showGamePlay(playgameScreen pgs, SDL_Surface *screen){
+  FILE* f = fopen("backup/general.toe", "rb");
+  char themePath[256];
+  fread(&themePath, sizeof(char)*256,1, f);
+  fclose(f);
+  SDL_Surface * back = IMG_Load(themePath);
+  SDL_Rect backPos;
+  backPos.x = 0; backPos.y = 0;
+  backPos.h = back->h; backPos.w = back->w;
+  SDL_BlitSurface(back, NULL, screen, &backPos);
+
+   SDL_BlitSurface(pgs.back, NULL, screen, &pgs.backPos);
+   SDL_BlitSurface(pgs.backbut, NULL, screen, &pgs.backbutPos);
+}
+/**
+ * function Controls the player input and blits X or O depending on the user.
+ * It returns -1 if the player clicked on exit button or 1 if the user played correctly or 0 if no input or 3 if back button was pressed.
+ */
+int player ( char (*m)[3], SDL_Surface *screen, playgameScreen pgs, char c, SDL_Event event,soundFX sfx){
+  switch(event.type){
+    case SDL_QUIT:
+     return -1;
+    break;
+     case SDL_MOUSEBUTTONDOWN:
+       //first case
+       if(((event.button.x >= 100) && (event.button.x <= 200)) &&
+       ((event.button.y >= 100) && (event.button.y <= 200))){
+        if(m[0][0] == ' '){
+           if(c == 'x'){
+             pgs.input.x = 115;
+             pgs.input.y = 115;
+             pgs.input.h = pgs.x->h;
+             pgs.input.w = pgs.x->w;
+             m[0][0] = 'x';
+           SDL_BlitSurface(pgs.x, NULL, screen, &pgs.input);
+           SDL_Flip(screen);
+         }else{
+           pgs.input.x = 115;
+           pgs.input.y = 115;
+           pgs.input.h = pgs.o->h;
+           pgs.input.w = pgs.o->w;
+           m[0][0] = 'o';
+           SDL_BlitSurface(pgs.o, NULL, screen, &pgs.input);
+           SDL_Flip(screen);
+         }
+         if(sfx.soundMuted == 0){
+        Mix_PlayChannel(-1, sfx.tap, 0);
+        }
+         return 1;
+       }
+       }else{
+         //second case
+         if(((event.button.x >= 207) && (event.button.x <= 303)) &&
+         ((event.button.y >= 100) && (event.button.y <= 200))){
+           if(m[0][1] == ' '){
+           if(c == 'x'){
+             pgs.input.x = 230;
+             pgs.input.y = 115;
+             pgs.input.h = pgs.x->h;
+             pgs.input.w = pgs.x->w;
+             m[0][1] = 'x';
+           SDL_BlitSurface(pgs.x, NULL, screen, &pgs.input);
+           SDL_Flip(screen);
+         }else{
+           pgs.input.x = 230;
+           pgs.input.y = 115;
+           pgs.input.h = pgs.o->h;
+           pgs.input.w = pgs.o->w;
+           m[0][1] = 'o';
+           SDL_BlitSurface(pgs.o, NULL, screen, &pgs.input);
+           SDL_Flip(screen);
+         }
+         if(sfx.soundMuted == 0){
+        Mix_PlayChannel(-1, sfx.tap, 0);
+        }
+           return 1;
+         }
+         }else{
+           //third case
+           if(((event.button.x >= 310) && (event.button.x <= 410)) &&
+           ((event.button.y >= 100) && (event.button.y <= 200))){
+            if(m[0][2] == ' '){
+             if(c == 'x'){
+               pgs.input.x = 325;
+               pgs.input.y = 115;
+               pgs.input.h = pgs.x->h;
+               pgs.input.w = pgs.x->w;
+               m[0][2] = 'x';
+             SDL_BlitSurface(pgs.x, NULL, screen, &pgs.input);
+             SDL_Flip(screen);
+           }else{
+             pgs.input.x = 325;
+             pgs.input.y = 115;
+             pgs.input.h = pgs.o->h;
+             pgs.input.w = pgs.o->w;
+             m[0][2] = 'o';
+             SDL_BlitSurface(pgs.o, NULL, screen, &pgs.input);
+             SDL_Flip(screen);
+           }
+           if(sfx.soundMuted == 0){
+          Mix_PlayChannel(-1, sfx.tap, 0);
+          }
+             return 1;
+           }
+           }else{
+             //forth case
+             if(((event.button.x >= 100) && (event.button.x <= 200)) &&
+             ((event.button.y >= 200) && (event.button.y <= 291))){
+            if(m[1][0] == ' '){
+               if(c == 'x'){
+                 pgs.input.x = 115;
+                 pgs.input.y = 215;
+                 pgs.input.h = pgs.x->h;
+                 pgs.input.w = pgs.x->w;
+                 m[1][0] = 'x';
+               SDL_BlitSurface(pgs.x, NULL, screen, &pgs.input);
+               SDL_Flip(screen);
+             }else{
+               pgs.input.x = 115;
+               pgs.input.y = 215;
+               pgs.input.h = pgs.o->h;
+               pgs.input.w = pgs.o->w;
+               m[1][0] = 'o';
+               SDL_BlitSurface(pgs.o, NULL, screen, &pgs.input);
+               SDL_Flip(screen);
+             }
+             if(sfx.soundMuted == 0){
+            Mix_PlayChannel(-1, sfx.tap, 0);
+            }
+               return 1;
+               }
+             }else{
+               //fifth case
+               if(((event.button.x >= 208) && (event.button.x <= 303)) &&
+               ((event.button.y >= 200) && (event.button.y <= 291))){
+               if(m[1][1] == ' '){
+                 if(c == 'x'){
+                   pgs.input.x = 228;
+                   pgs.input.y = 215;
+                   pgs.input.h = pgs.x->h;
+                   pgs.input.w = pgs.x->w;
+                   m[1][1] = 'x';
+                 SDL_BlitSurface(pgs.x, NULL, screen, &pgs.input);
+                 SDL_Flip(screen);
+                }else{
+                 pgs.input.x = 228;
+                 pgs.input.y = 215;
+                 pgs.input.h = pgs.o->h;
+                 pgs.input.w = pgs.o->w;
+                 m[1][1] = 'o';
+                 SDL_BlitSurface(pgs.o, NULL, screen, &pgs.input);
+                 SDL_Flip(screen);
+                }
+                if(sfx.soundMuted == 0){
+                Mix_PlayChannel(-1, sfx.tap, 0);
+                }
+                 return 1;
+                 }
+               }else{
+                 //sixth case
+                 if(((event.button.x >= 310) && (event.button.x <= 404)) &&
+                 ((event.button.y >= 200) && (event.button.y <= 291))){
+                   if(m[1][2] == ' '){
+                   if(c == 'x'){
+                     pgs.input.x = 325;
+                     pgs.input.y = 215;
+                     pgs.input.h = pgs.x->h;
+                     pgs.input.w = pgs.x->w;
+                     m[1][2] = 'x';
+                   SDL_BlitSurface(pgs.x, NULL, screen, &pgs.input);
+                   SDL_Flip(screen);
+                  }else{
+                   pgs.input.x = 325;
+                   pgs.input.y = 215;
+                   pgs.input.h = pgs.o->h;
+                   pgs.input.w = pgs.o->w;
+                   m[1][2] = 'o';
+                   SDL_BlitSurface(pgs.o, NULL, screen, &pgs.input);
+                   SDL_Flip(screen);
+                  }
+                  if(sfx.soundMuted == 0){
+                 Mix_PlayChannel(-1, sfx.tap, 0);
+                 }
+                   return 1;
+                   }
+                 }else{
+                   //seventh case
+                   if(((event.button.x >= 100) && (event.button.x <= 200)) &&
+                   ((event.button.y >= 298) && (event.button.y <= 390))){
+                     if(m[2][0] == ' '){
+                     if(c == 'x'){
+                       pgs.input.x = 115;
+                       pgs.input.y = 315;
+                       pgs.input.h = pgs.x->h;
+                       pgs.input.w = pgs.x->w;
+                       m[2][0] = 'x';
+                     SDL_BlitSurface(pgs.x, NULL, screen, &pgs.input);
+                     SDL_Flip(screen);
+                    }else{
+                     pgs.input.x = 115;
+                     pgs.input.y = 315;
+                     pgs.input.h = pgs.o->h;
+                     pgs.input.w = pgs.o->w;
+                     m[2][0] = 'o';
+                     SDL_BlitSurface(pgs.o, NULL, screen, &pgs.input);
+                     SDL_Flip(screen);
+                    }
+                    if(sfx.soundMuted == 0){
+                   Mix_PlayChannel(-1, sfx.tap, 0);
+                   }
+                     return 1;
+                     }
+                   }else{
+                     //eighth case
+                     if(((event.button.x >= 208) && (event.button.x <= 303)) &&
+                     ((event.button.y >= 300) && (event.button.y <= 390))){
+                      if(m[2][1] == ' '){
+                       if(c == 'x'){
+                         pgs.input.x = 215;
+                         pgs.input.y = 315;
+                         pgs.input.h = pgs.x->h;
+                         pgs.input.w = pgs.x->w;
+                         m[2][1] = 'x';
+                       SDL_BlitSurface(pgs.x, NULL, screen, &pgs.input);
+                       SDL_Flip(screen);
+                      }else{
+                       pgs.input.x = 215;
+                       pgs.input.y = 315;
+                       pgs.input.h = pgs.o->h;
+                       pgs.input.w = pgs.o->w;
+                       m[2][1] = 'o';
+                       SDL_BlitSurface(pgs.o, NULL, screen, &pgs.input);
+                       SDL_Flip(screen);
+                      }
+                      if(sfx.soundMuted == 0){
+                     Mix_PlayChannel(-1, sfx.tap, 0);
+                     }
+                       return 1;
+                     }
+                     }else{
+                       //ninth case
+                       if(((event.button.x >= 310) && (event.button.x <= 403)) &&
+                       ((event.button.y >= 300) && (event.button.y <= 390))){
+                     if(m[2][2] == ' '){
+                         if(c == 'x'){
+                           pgs.input.x = 325;
+                           pgs.input.y = 315;
+                           pgs.input.h = pgs.x->h;
+                           pgs.input.w = pgs.x->w;
+                           m[2][2] = 'x';
+                         SDL_BlitSurface(pgs.x, NULL, screen, &pgs.input);
+                         SDL_Flip(screen);
+                        }else{
+                         pgs.input.x = 325;
+                         pgs.input.y = 315;
+                         pgs.input.h = pgs.o->h;
+                         pgs.input.w = pgs.o->w;
+                         m[2][2] = 'o';
+                         SDL_BlitSurface(pgs.o, NULL, screen, &pgs.input);
+                         SDL_Flip(screen);
+                        }
+                        if(sfx.soundMuted == 0){
+                       Mix_PlayChannel(-1, sfx.tap, 0);
+                       }
+                         return 1;
+                     }
+                       }else{
+                          //back button
+                           if(((event.button.x <= (pgs.backbutPos.x + pgs.backbut->w)) && (event.button.x >= pgs.backbutPos.x)) && ((event.button.y >= pgs.backbutPos.y) && (event.button.y <= (pgs.backbutPos.y + pgs.backbut->h)))){
+                             return 3;
+                           }
+                       }
+                     }
+                   }
+                 }
+               }
+             }
+           }
+         }
+       }
+     break;
+  }
+     return 0;
+}
+/**
+ * function prints on screen the coordinates of computer
+ * computerEnteries structure contains the computer coordinates
+ *char c indicates the user's character to let the computer know what to print
+ */
+void printOnTable(computerEnteries ce, char (*m)[3], SDL_Surface * screen, playgameScreen pgs, char c){
+  switch (ce.xc) {
+    case 0:
+    switch (ce.yc) {
+      case 0:
+      if( c == 'o'){
+        pgs.input.x = 115;
+        pgs.input.y = 115;
+        pgs.input.h = pgs.x->h;
+        pgs.input.w = pgs.x->w;
+        m[0][0] = 'x';
+      SDL_BlitSurface(pgs.x, NULL, screen, &pgs.input);
+      SDL_Flip(screen);
+    }else{
+      pgs.input.x = 115;
+      pgs.input.y = 115;
+      pgs.input.h = pgs.o->h;
+      pgs.input.w = pgs.o->w;
+      m[0][0] = 'o';
+      SDL_BlitSurface(pgs.o, NULL, screen, &pgs.input);
+      SDL_Flip(screen);
+    }
+      break;
+      case 1:
+      if(c == 'o'){
+        pgs.input.x = 230;
+        pgs.input.y = 115;
+        pgs.input.h = pgs.x->h;
+        pgs.input.w = pgs.x->w;
+        m[0][1] = 'x';
+      SDL_BlitSurface(pgs.x, NULL, screen, &pgs.input);
+      SDL_Flip(screen);
+    }else{
+      pgs.input.x = 230;
+      pgs.input.y = 115;
+      pgs.input.h = pgs.o->h;
+      pgs.input.w = pgs.o->w;
+      m[0][1] = 'o';
+      SDL_BlitSurface(pgs.o, NULL, screen, &pgs.input);
+      SDL_Flip(screen);
+    }
+      break;
+      case 2:
+      if(c == 'o'){
+        pgs.input.x = 325;
+        pgs.input.y = 115;
+        pgs.input.h = pgs.x->h;
+        pgs.input.w = pgs.x->w;
+        m[0][2] = 'x';
+      SDL_BlitSurface(pgs.x, NULL, screen, &pgs.input);
+      SDL_Flip(screen);
+    }else{
+      pgs.input.x = 325;
+      pgs.input.y = 115;
+      pgs.input.h = pgs.o->h;
+      pgs.input.w = pgs.o->w;
+      m[0][2] = 'o';
+      SDL_BlitSurface(pgs.o, NULL, screen, &pgs.input);
+      SDL_Flip(screen);
+    }
+      break;
+    }
+    break;
+    case 1:
+    switch (ce.yc) {
+      case 0:
+      if(c == 'o'){
+        pgs.input.x = 115;
+        pgs.input.y = 215;
+        pgs.input.h = pgs.x->h;
+        pgs.input.w = pgs.x->w;
+        m[1][0] = 'x';
+      SDL_BlitSurface(pgs.x, NULL, screen, &pgs.input);
+      SDL_Flip(screen);
+     }else{
+      pgs.input.x = 115;
+      pgs.input.y = 215;
+      pgs.input.h = pgs.o->h;
+      pgs.input.w = pgs.o->w;
+      m[1][0] = 'o';
+      SDL_BlitSurface(pgs.o, NULL, screen, &pgs.input);
+      SDL_Flip(screen);
+     }
+      break;
+      case 1:
+        if(c == 'o'){
+          pgs.input.x = 228;
+          pgs.input.y = 215;
+          pgs.input.h = pgs.x->h;
+          pgs.input.w = pgs.x->w;
+          m[1][1] = 'x';
+        SDL_BlitSurface(pgs.x, NULL, screen, &pgs.input);
+        SDL_Flip(screen);
+       }else{
+        pgs.input.x = 228;
+        pgs.input.y = 215;
+        pgs.input.h = pgs.o->h;
+        pgs.input.w = pgs.o->w;
+        m[1][1] = 'o';
+        SDL_BlitSurface(pgs.o, NULL, screen, &pgs.input);
+        SDL_Flip(screen);
+       }
+      break;
+      case 2:
+      if(c == 'o'){
+        pgs.input.x = 325;
+        pgs.input.y = 215;
+        pgs.input.h = pgs.x->h;
+        pgs.input.w = pgs.x->w;
+        m[1][2] = 'x';
+      SDL_BlitSurface(pgs.x, NULL, screen, &pgs.input);
+      SDL_Flip(screen);
+     }else{
+      pgs.input.x = 325;
+      pgs.input.y = 215;
+      pgs.input.h = pgs.o->h;
+      pgs.input.w = pgs.o->w;
+      m[1][2] = 'o';
+      SDL_BlitSurface(pgs.o, NULL, screen, &pgs.input);
+      SDL_Flip(screen);
+     }
+      break;
+    }
+    break;
+    case 2:
+    switch (ce.yc) {
+      case 0:
+      if(c == 'o'){
+        pgs.input.x = 115;
+        pgs.input.y = 315;
+        pgs.input.h = pgs.x->h;
+        pgs.input.w = pgs.x->w;
+        m[2][0] = 'x';
+      SDL_BlitSurface(pgs.x, NULL, screen, &pgs.input);
+      SDL_Flip(screen);
+     }else{
+      pgs.input.x = 115;
+      pgs.input.y = 315;
+      pgs.input.h = pgs.o->h;
+      pgs.input.w = pgs.o->w;
+      m[2][0] = 'o';
+      SDL_BlitSurface(pgs.o, NULL, screen, &pgs.input);
+      SDL_Flip(screen);
+     }
+      break;
+      case 1:
+      if(c == 'o'){
+        pgs.input.x = 215;
+        pgs.input.y = 315;
+        pgs.input.h = pgs.x->h;
+        pgs.input.w = pgs.x->w;
+        m[2][1] = 'x';
+      SDL_BlitSurface(pgs.x, NULL, screen, &pgs.input);
+      SDL_Flip(screen);
+      }else{
+      pgs.input.x = 215;
+      pgs.input.y = 315;
+      pgs.input.h = pgs.o->h;
+      pgs.input.w = pgs.o->w;
+      m[2][1] = 'o';
+      SDL_BlitSurface(pgs.o, NULL, screen, &pgs.input);
+      SDL_Flip(screen);
+      }
+      break;
+      case 2:
+      if(c == 'o'){
+        pgs.input.x = 325;
+        pgs.input.y = 315;
+        pgs.input.h = pgs.x->h;
+        pgs.input.w = pgs.x->w;
+        m[2][2] = 'x';
+      SDL_BlitSurface(pgs.x, NULL, screen, &pgs.input);
+      SDL_Flip(screen);
+     }else{
+      pgs.input.x = 325;
+      pgs.input.y = 315;
+      pgs.input.h = pgs.o->h;
+      pgs.input.w = pgs.o->w;
+      m[2][2] = 'o';
+      SDL_BlitSurface(pgs.o, NULL, screen, &pgs.input);
+      SDL_Flip(screen);
+     }
+      break;
+    }
+    break;
+  }
+}
+/**
+ * function Checks if the matrix m is full
+ * It returns 1 if the matrix is full or o if it is not yet
+ */
+int checkfin(char (*m)[3]){
+    int i,j;
+    for (i=0; i<=2; i++) {
+        for (j=0; j<=2; j++) {
+            if (m[i][j] == ' ') {
+                return 0;
+            }
+        }
+    }
+    return 1;
+}
+/**
+ * function Checks for who won by traversing the matrix looking for three charactes in a row, as well as prints a line when it finds a winner.
+ */
+void checkwin(char (*m)[3], int * winner,char whatComputerChose, int *won, SDL_Surface * screen, playgameScreen pgs){
+    int i,count,j;
+    //for X===========
+    count = 0;
+    for (i=0; i<=2; i++) {
+        if (m[0][i] == 'x'){
+            count++;
+        }
+    }
+    if (count == 3) {
+        *won = 1;
+        if(whatComputerChose == 'x'){
+          *winner = 1;
+        }else{
+          *winner = 2;
+        }
+        SDL_BlitSurface(pgs.l[4].line, NULL, screen, &pgs.l[4].linePos);
+        SDL_Flip(screen);
+        return;
+    }
+    count = 0;
+    for (i=0; i<=2; i++) {
+        if (m[i][0] == 'x') {
+            count++;
+        }
+    }
+    if (count == 3) {
+        *won = 1;
+        if(whatComputerChose == 'x'){
+          *winner = 1;
+        }else{
+          *winner = 2;
+        }
+        SDL_BlitSurface(pgs.l[5].line, NULL, screen, &pgs.l[5].linePos);
+        SDL_Flip(screen);
+          return;
+    }
+    count = 0;
+    for (i=0; i<=2; i++) {
+        if (m[i][i] == 'x') {
+            count++;
+        }
+    }
+    if (count == 3) {
+        *won = 1;
+        if(whatComputerChose == 'x'){
+          *winner = 1;
+        }else{
+          *winner = 2;
+        }
+        SDL_BlitSurface(pgs.l[0].line, NULL, screen, &pgs.l[0].linePos);
+        SDL_Flip(screen);
+          return;
+    }
+    count = 0;
+    for (i=0; i<=2; i++) {
+        if (m[2][i] == 'x') {
+            count++;
+        }
+    }
+    if (count == 3) {
+        *won = 1;
+        if(whatComputerChose == 'x'){
+          *winner = 1;
+        }else{
+          *winner = 2;
+        }
+        SDL_BlitSurface(pgs.l[6].line, NULL, screen, &pgs.l[6].linePos);
+        SDL_Flip(screen);
+          return;
+    }
+    count = 0;
+    for (i=0; i<=2; i++) {
+        if (m[1][i] == 'x') {
+            count++;
+        }
+    }
+    if (count == 3) {
+        *won = 1;
+        if(whatComputerChose == 'x'){
+          *winner = 1;
+        }else{
+          *winner = 2;
+        }
+        SDL_BlitSurface(pgs.l[3].line, NULL, screen, &pgs.l[3].linePos);
+        SDL_Flip(screen);
+          return;
+    }
+    count = 0;
+    for (i=0; i<=2; i++) {
+        if (m[i][1] == 'x') {
+            count++;
+        }
+    }
+    if (count == 3) {
+        *won = 1;
+        if(whatComputerChose == 'x'){
+          *winner = 1;
+        }else{
+          *winner = 2;
+        }
+        SDL_BlitSurface(pgs.l[1].line, NULL, screen, &pgs.l[1].linePos);
+        SDL_Flip(screen);
+          return;
+    }
+    count = 0; j = 0;
+    for (i=2; i>=0; i--) {
+        if (m[i][j] == 'x') {
+            count++;
+        }
+        j++;
+    }
+    if (count == 3) {
+        *won = 1;
+        if(whatComputerChose == 'x'){
+          *winner = 1;
+        }else{
+          *winner = 2;
+        }
+        SDL_BlitSurface(pgs.l[2].line, NULL, screen, &pgs.l[2].linePos);
+        SDL_Flip(screen);
+          return;
+    }
+    count = 0;
+    for (i=2; i>=0; i--) {
+        if (m[i][2] == 'x') {
+            count++;
+        }
+    }
+    if (count == 3) {
+        *won = 1;
+        if(whatComputerChose == 'x'){
+          *winner = 1;
+        }else{
+          *winner = 2;
+        }
+        SDL_BlitSurface(pgs.l[7].line, NULL, screen, &pgs.l[7].linePos);
+        SDL_Flip(screen);
+          return;
+    }
+    //for O ==========
+    count = 0;
+    for (i=0; i<=2; i++) {
+        if (m[0][i] == 'o') {
+            count++;
+        }
+    }
+    if (count == 3) {
+        *won = 1;
+        if(whatComputerChose == 'o'){
+          *winner = 1;
+        }else{
+          *winner = 2;
+        }
+        SDL_BlitSurface(pgs.l[4].line, NULL, screen, &pgs.l[4].linePos);
+        SDL_Flip(screen);
+          return;
+    }
+    count = 0;
+    for (i=0; i<=2; i++) {
+        if (m[i][0] == 'o') {
+            count++;
+        }
+    }
+    if (count == 3) {
+        *won = 1;
+        if(whatComputerChose == 'o'){
+          *winner = 1;
+        }else{
+          *winner = 2;
+        }
+        SDL_BlitSurface(pgs.l[5].line, NULL, screen, &pgs.l[5].linePos);
+        SDL_Flip(screen);
+          return;
+    }
+    count = 0;
+    for (i=0; i<=2; i++) {
+        if (m[i][i] == 'o') {
+            count++;
+        }
+    }
+    if (count == 3) {
+        *won = 1;
+        if(whatComputerChose == 'o'){
+          *winner = 1;
+        }else{
+          *winner = 2;
+        }
+        SDL_BlitSurface(pgs.l[0].line, NULL, screen, &pgs.l[0].linePos);
+        SDL_Flip(screen);
+          return;
+    }
+    count = 0;
+    for (i=0; i<=2; i++) {
+        if (m[2][i] == 'o') {
+          count++;
+        }
+    }
+    if (count == 3) {
+        *won = 1;
+        if(whatComputerChose == 'o'){
+          *winner = 1;
+        }else{
+          *winner = 2;
+        }
+        SDL_BlitSurface(pgs.l[6].line, NULL, screen, &pgs.l[6].linePos);
+        SDL_Flip(screen);
+          return;
+    }
+    count = 0;
+    for (i=0; i<=2; i++) {
+        if (m[1][i] == 'o') {
+            count++;
+        }
+    }
+    if (count == 3) {
+        *won = 1;
+        if(whatComputerChose == 'o'){
+          *winner = 1;
+        }else{
+          *winner = 2;
+        }
+        SDL_BlitSurface(pgs.l[3].line, NULL, screen, &pgs.l[3].linePos);
+        SDL_Flip(screen);
+          return;
+    }
+    count = 0;
+    for (i=0; i<=2; i++) {
+      if (m[i][1] == 'o') {
+        count++;
+      }
+    }
+    if (count == 3) {
+        *won = 1;
+        if(whatComputerChose == 'o'){
+          *winner = 1;
+        }else{
+          *winner = 2;
+        }
+        SDL_BlitSurface(pgs.l[1].line, NULL, screen, &pgs.l[1].linePos);
+        SDL_Flip(screen);
+          return;
+    }
+    count = 0; j = 0;
+    for (i=2; i>=0; i--) {
+        if (m[i][j] == 'o') {
+            count++;
+        }
+        j++;
+    }
+    if (count == 3) {
+        *won = 1;
+        if(whatComputerChose == 'o'){
+          *winner = 1;
+        }else{
+          *winner = 2;
+        }
+        SDL_BlitSurface(pgs.l[2].line, NULL, screen, &pgs.l[2].linePos);
+        SDL_Flip(screen);
+          return;
+    }
+    count = 0;
+    for (i=2; i>=0; i--) {
+        if (m[i][2] == 'o') {
+            count++;
+        }
+    }
+    if (count == 3) {
+        *won = 1;
+        if(whatComputerChose == 'o'){
+          *winner = 1;
+        }else{
+          *winner = 2;
+        }
+        SDL_BlitSurface(pgs.l[7].line, NULL, screen, &pgs.l[7].linePos);
+        SDL_Flip(screen);
+          return;
+    }
+}
+/**
+ * function it mananages score depending on the winner.
+ * int *scomputer Score of the computer (or player1 on friend mode).
+ * int *splayer Score of the user (or player2 on friend mode)
+ *if winner is 1 then it is computer else player
+ *if whichMode is  0 than it is computer mode else friend mode
+ *return nothing
+ */
+void showScore(int winner,int scomputer, int splayer,SDL_Surface * screen, playgameScreen pgs, int whichMode){
+  //if winner is 1 then it is computer else player
+  // if whichMode is equal to 0 than it is computer mode else friend mode
+  if(whichMode == 0){
+    if (winner == 1) {
+        char ch[128];
+        SDL_Surface *scoring = NULL;
+        TTF_Font *police = NULL;
+        SDL_Color noir = {0, 0, 0};
+        if (TTF_Init() < 0) {
+          printf("error\n");
+      }else{
+        police = TTF_OpenFont("Resources/font.ttf", 20);
+        if (police == NULL) {
+          printf("Error in opening font file\n");
+        }else{
+          sprintf(ch,"Computer        %d - %d        You",scomputer, splayer);
+          scoring=TTF_RenderText_Solid(police, ch, noir);
+          TTF_CloseFont(police);
+          TTF_Quit();
+        }
+      }
+      SDL_BlitSurface(pgs.backScore, NULL, screen, &pgs.backScorePos);
+      SDL_BlitSurface(scoring, NULL, screen, &pgs.scorePos);
+      SDL_Flip(screen);
+    }else{
+        char ch[128];
+        SDL_Surface *scoring = NULL;
+        TTF_Font *police = NULL;
+        SDL_Color noir = {0, 0, 0};
+        if (TTF_Init() < 0) {
+          printf("error\n");
+      }else{
+        police = TTF_OpenFont("Resources/font.ttf", 20);
+        if (police == NULL) {
+          printf("Error in opening font file\n");
+        }else{
+          sprintf(ch,"Computer        %d - %d        You",scomputer, splayer);
+          scoring=TTF_RenderText_Solid(police, ch, noir);
+      TTF_CloseFont(police);
+      TTF_Quit();
+      }
+      }
+      SDL_BlitSurface(pgs.backScore, NULL, screen, &pgs.backScorePos);
+      SDL_BlitSurface(scoring, NULL, screen, &pgs.scorePos);
+      SDL_Flip(screen);
+    }
+  }else{
+    if (winner == 1) {
+        char ch[128];
+        SDL_Surface *scoring = NULL;
+        TTF_Font *police = NULL;
+        SDL_Color noir = {0, 0, 0};
+        if (TTF_Init() < 0) {
+          printf("error\n");
+      }else{
+        police = TTF_OpenFont("Resources/font.ttf", 20);
+        if (police == NULL) {
+          printf("Error in opening font file\n");
+        }else{
+          sprintf(ch,"'X' Player     %d - %d     'O' Player",scomputer, splayer);
+          scoring=TTF_RenderText_Solid(police, ch, noir);
+      TTF_CloseFont(police);
+      TTF_Quit();
+      }
+      }
+      SDL_BlitSurface(pgs.backScore, NULL, screen, &pgs.backScorePos);
+      SDL_BlitSurface(scoring, NULL, screen, &pgs.scorePos);
+      SDL_Flip(screen);
+    }else{
+        char ch[128];
+        SDL_Surface *scoring = NULL;
+        TTF_Font *police = NULL;
+        SDL_Color noir = {0, 0, 0};
+        if (TTF_Init() < 0) {
+          printf("error\n");
+      }else{
+        police = TTF_OpenFont("Resources/font.ttf", 20);
+        if (police == NULL) {
+          printf("Error in opening font file\n");
+        }else{
+          sprintf(ch,"'X' Player     %d - %d     'O' Player",scomputer, splayer);
+          scoring=TTF_RenderText_Solid(police, ch, noir);
+      TTF_CloseFont(police);
+      TTF_Quit();
+      }
+      }
+      SDL_BlitSurface(pgs.backScore, NULL, screen, &pgs.backScorePos);
+      SDL_BlitSurface(scoring, NULL, screen, &pgs.scorePos);
+      SDL_Flip(screen);
+    }
+  }
+
+}
+/**
+ * @brief it mananages score depending on the winner.
+ * @param[out] int *splayer1 Score of the computer (or player1 on friend mode).
+ * @param[out] int *splayer2 Score of the user (or player2 on friend mode).
+ * @paran[in] int winner Used to say which one has been won.
+ * @detail This function should be called as a condition of the game loop .
+ * @return nothing.
+ */
+void manageScore (int winner , int *splayer1, int *splayer2){
+  //if winner is 1 then it is player1 else player2
+    if (winner == 1) {
+      (*splayer1)++;
+    }else{
+      (*splayer2)++;
+    }
+}
+/**
+ * function it mananages score depending on the winner.
+ * if winner is 1 then it is player1 else player2
+ * return nothing.
+ */
+int fileManipulation(int flag, int points){
+  FILE * f = NULL;
+  int buffer;
+  //flag = 0 means reading from file
+  if(flag == 0){
+    f = fopen("backup/points.toe", "rb");
+      fread(&buffer, sizeof(int), 1, f);
+      fclose(f);
+      //return num of points in case of success reading
+      return buffer;
+
+  }else{
+    //flag = 1 means writing from file
+      f = fopen("backup/points.toe", "wb");
+      fwrite(&points, 1, sizeof(int), f);
+          fclose(f);
+    //return -1 in case of success writing
+    return -1;
+  }
+  // return -2 by default in case of an error in flag
+  return -2;
+}
+/**
+ * function it only prints on screen number of points gained and the highest number of points gained.
+ * struct points p the points to print.
+*/
+void printPoints (points p, SDL_Surface * screen){
+  char ch[128];
+  char ch1[128];
+  SDL_Surface *pointsSurf = NULL;
+    SDL_Surface *high_pointsSurf = NULL;
+  SDL_Rect pointsPos;
+  SDL_Rect high_pointsPos;
+  pointsPos.x =  82;
+  pointsPos.y = 55;
+  high_pointsPos.x = 270 ;
+  high_pointsPos.y =  55;
+  TTF_Font *police = NULL;
+  SDL_Color white = {255, 255, 255};
+  SDL_Color red = {255, 95, 95};
+  if (TTF_Init() < 0) {
+    printf("error in loading font\n");
+}else{
+  police = TTF_OpenFont("Resources/font.ttf", 18);
+  if (police == NULL) {
+    printf("Error in opening font file\n");
+  }else{
+    p.highest_points = fileManipulation(0, p.highest_points);
+    sprintf(ch,"Current Points:   %d     ", p.user_points);
+    sprintf(ch1,"Highest Points:   %d", p.highest_points);
+    pointsSurf=TTF_RenderText_Solid(police, ch, white);
+    high_pointsSurf=TTF_RenderText_Solid(police, ch1, red);
+TTF_CloseFont(police);
+TTF_Quit();
+}
+}
+SDL_BlitSurface(pointsSurf, NULL, screen, &pointsPos);
+SDL_BlitSurface(high_pointsSurf, NULL, screen, &high_pointsPos);
+SDL_Flip(screen);
+}
+/**
+ * function  manages all the points stuff NOT THE SCORE.
+ * points *p final result of both high and current points after managing.
+ *int winner indicator of who is the winner 1 if it's computer,  2 if it is user.
+ * int scomputer the score of computer.
+ *  int splayer the score of user.
+ */
+void managePoints(points *p, int winner, int scomputer, int splayer, SDL_Surface * screen){
+  int two_times_in_row = 0; // this variable is to check if the user lost two times in a row to decrease his score.
+  int reciver;
+  SDL_Surface * newHSwindow = NULL;
+  SDL_Rect newHSwindowPos;
+  FILE * f = fopen("backup/general.toe", "rb");
+  char themePath[256];
+  fread(&themePath, sizeof(char)*256,1, f);
+  fclose(f);
+  SDL_Surface * back = IMG_Load(themePath);
+  SDL_Rect backPos;
+  backPos.x = 0; backPos.y = 0;
+  backPos.h = back->h; backPos.w = back->w;
+
+  newHSwindow = IMG_Load("Resources/newscoresplash.png");
+  newHSwindowPos.x = 0; newHSwindowPos.y = 0;
+  newHSwindowPos.h = newHSwindow->h; newHSwindowPos.w = newHSwindow->w;
+  reciver = fileManipulation(0, p->highest_points);
+  //reciver >= 0 means there's a value returned from file//
+  if((reciver >= 0)){
+  //if the user won
+  if (winner == 2) {
+    if(splayer >= 5){
+      p->user_points += 20;
+    }else{
+      p->user_points += 10;
+    }
+    two_times_in_row = 0;
+    if(reciver < p->user_points){
+      fileManipulation(1, p->user_points);
+      SDL_BlitSurface(back, NULL, screen, &backPos);
+      SDL_BlitSurface(newHSwindow, NULL, screen, &newHSwindowPos);
+      SDL_Flip(screen);
+      SDL_Delay(500);
+    }
+  }else{
+    //if the computer won
+    if((p->user_points != 0) && (two_times_in_row == 2)){
+      p->user_points -= 30;
+    }else{
+      if((p->user_points != 0) && (two_times_in_row < 2)){
+       p->user_points -= 10;
+       two_times_in_row++;
+     }
+    }
+  }
+}
+}
+/**
+ * function creates all files necessary to run the game if they are not found and initialize them.
+ * it returns nothing.
+ */
+void creating_files(){
+  DIR * d = NULL;
+  int buffer;
+  int i;
+  FILE * f = NULL;
+  d = opendir("backup");
+  if(d == NULL){
+    //file that stores tics value
+    system("mkdir backup");
+    system("cd backup");
+    f=fopen("backup/tics.toe", "wb");
+    buffer = 100;
+    fwrite(&buffer, 1, sizeof(int), f);
+    fclose(f);
+    //file that stores highest points value
+    f=fopen("backup/points.toe", "wb");
+    buffer = 0;
+    fwrite(&buffer, 1, sizeof(int), f); fclose(f);
+    //file that stores actual theme.
+    f=fopen("backup/general.toe", "wb");
+    char themeName[256];
+    strcpy(themeName, "Resources/themes/greeness.jpg");
+    fwrite(&themeName, 1, sizeof(char)*265, f); fclose(f);
+    //file that store which items bought from store
+    f=fopen("backup/items.toe", "wb");
+      //the stop condition in the loop bellow should increment as the number of items increase.
+    for(i=0; i<4; i++ ){
+      buffer = 0;
+      fwrite(&buffer, 1, sizeof(int), f);
+    }
+    fclose(f);
+  }else{
+    f=fopen("backup/items.toe", "rb");
+    if(f == NULL){
+      f=fopen("backup/items.toe", "wb");
+    }
+    fclose(f);
+    f=fopen("backup/tics.toe", "rb");
+    if(f == NULL){
+      f=fopen("backup/tics.toe", "wb");
+    }
+    fclose(f);
+    f=fopen("backup/general.toe", "rb");
+    if(f = NULL){
+      f=fopen("backup/general.toe", "wb");
+    }
+    f=fopen("backup/points.toe", "rb");
+    if(f == NULL){
+      f=fopen("backup/points.toe", "wb");
+    }
+    fclose(f);
+  }
+}
+/**
+ * function Adds the new amount of tics to the user's balance after reaching the desired levels in the pack.
+ * int tics the amount of tics to add.
+ */
+void addTicsToBalance(int tics){
+  FILE * f = NULL;
+  f = fopen("backup/tics.toe", "rb");
+  int x;
+  fread(&x, sizeof(int), 1, f);
+  x = x + tics;
+  fclose(f);
+  f = fopen("backup/tics.toe", "wb");
+  int buffer = x;
+  fwrite(&buffer, 1, sizeof(int), f);
+  fclose(f);
+}
+
+/**
+ * function  creates all files necessary to run the app if they are not found and initialize them.
+ * int winChecker it says 1 if the user wins or 0 if loses.
+*returns 1 and adds tics to balance or if he loses and get to zero so it *Sreturns 0 by default it returns -1 which means nothing.
+ */
+ int manageLevels(int * levels, int num, int winChecker){
+   int numPkg, amount;
+   switch(num){
+     case 1: numPkg = 6; amount = 95;
+     break;
+     case 2: numPkg = 11; amount = 145;
+     break;
+     case 3: numPkg = 15; amount = 190;
+     break;
+   }
+   if(winChecker == 1){
+     if(numPkg == (*levels)+1){
+      addTicsToBalance(amount);
+       return 1;
+     }else{
+       (*levels)++;
+     }
+   }else{
+     (*levels)--;
+     if(*levels == 0){
+       FILE * f = NULL;
+       int buffer;
+       f = fopen("backup/tics.toe", "rb");
+       fread(&buffer, sizeof(int), 1, f);
+       fclose(f);
+       f = fopen("backup/tics.toe", "wb");
+       if(buffer >= 40){
+         buffer = buffer - 40;
+       }else{
+           buffer  = 0;
+       }
+       fwrite(&buffer, 1, sizeof(int), f);
+       fclose(f);
+       return 0;
+     }
+   }
+   return -1;
+ }
